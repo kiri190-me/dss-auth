@@ -16,7 +16,8 @@
     "db:up": "docker compose --env-file .env.local up -d db-dev",
     "db:down": "docker compose --env-file .env.local down",
     "db:psql": "docker exec -it dss-auth-postgres-dev psql -U dss_auth_app -d dss_auth_dev",
-    "admin:promote": "node --env-file=.env.local --import tsx scripts/promote-admin.ts"
+    "admin:promote": "node --env-file=.env.local --import tsx scripts/promote-admin.ts",
+    "check:oidc": "node --env-file=.env.local --import tsx scripts/e2e-oidc-check.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

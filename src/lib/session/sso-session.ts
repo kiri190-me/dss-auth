@@ -75,6 +75,8 @@ export type SsoSessionUser = {
   email: string | null;
   status: (typeof users.status.enumValues)[number];
   isPortalAdmin: boolean;
+  /** 실제로 카카오 인증을 통과한 시각. ID 토큰의 auth_time 클레임이 된다. */
+  authTime: Date;
 };
 
 /**
@@ -99,6 +101,7 @@ export async function readSsoSession(): Promise<SsoSessionUser | null> {
       email: users.email,
       status: users.status,
       isPortalAdmin: users.isPortalAdmin,
+      authTime: ssoSessions.authTime,
     })
     .from(ssoSessions)
     .innerJoin(users, eq(ssoSessions.userId, users.id))

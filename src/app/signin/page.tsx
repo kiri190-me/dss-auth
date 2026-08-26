@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { sanitizeReturnTo } from "@/lib/session/login-tx";
 import { readSsoSession } from "@/lib/session/sso-session";
 
 export const metadata: Metadata = { title: "로그인 | DSS 통합 로그인" };
@@ -22,18 +23,35 @@ const ERROR_MESSAGES: Record<string, string> = {
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; returnTo?: string }>;
+  searchParams: Promise<{ error?: string; returnTo?: string; force?: string }>;
 }) {
+  const { error, returnTo, force } = await searchParams;
+
+  // force=1은 인가 요청에 prompt=login이 실려 왔다는 뜻이다. 이미 로그인해
+  // 있어도 그냥 통과시키지 않고 카카오 왕복을 한 번 더 돌게 한다.
+  //
+  // 한계를 정직하게 적어둔다: 카카오가 다시 비밀번호를 묻느냐는 카카오가
+  // 정한다. 우리가 보장하는 것은 "새 인가 왕복을 거쳤고 auth_time이
+  // 갱신된다"까지다. 완전한 재인증이 필요한 조작이 생기면 그때는 이 값에
+  // 기대지 말고 별도 확인 수단을 둬야 한다.
+  const forceReauth = force === "1";
+
+  // ⚠️ returnTo는 주소창에서 온 값이다. 그대로 redirect에 넘기면
+  // ?returnTo=https://악성사이트 로 사용자를 보낼 수 있는 오픈 리다이렉터가
+  // 된다. 경로 형태만 통과시킨다.
+  const safeReturnTo = sanitizeReturnTo(returnTo ?? null);
+
   const session = await readSsoSession();
-  if (session) {
-    redirect(session.status === "ACTIVE" ? "/apps" : "/pending");
+  if (session && !forceReauth) {
+    redirect(
+      session.status === "ACTIVE" ? (safeReturnTo ?? "/apps") : "/pending"
+    );
   }
 
-  const { error, returnTo } = await searchParams;
   const message = error ? (ERROR_MESSAGES[error] ?? ERROR_MESSAGES.kakao) : null;
 
-  const startUrl = returnTo
-    ? `/api/kakao/start?returnTo=${encodeURIComponent(returnTo)}`
+  const startUrl = safeReturnTo
+    ? `/api/kakao/start?returnTo=${encodeURIComponent(safeReturnTo)}`
     : "/api/kakao/start";
 
   return (
