@@ -31,6 +31,9 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (.env.example is a safe placeholder template and is tracked)
+#
+# .env* 로 통째로 막는다 — .env.local.bak / .env.old 같은 백업 파일이
+# 그물을 빠져나가면 비밀값이 그대로 커밋된다.
 .env*
 !.env.example
 
