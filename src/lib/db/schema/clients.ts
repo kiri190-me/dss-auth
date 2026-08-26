@@ -1,0 +1,55 @@
+import { sql } from "drizzle-orm";
+import {
+  boolean,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+
+/**
+ * 연결된 사내 시스템 = OIDC 클라이언트.
+ *
+ * 동적 등록(Dynamic Client Registration)은 구현하지 않는다. 시스템 개수가
+ * 한 자릿수이고, 등록 자체가 보안 결정이라 사람이 승인하는 편이 맞다.
+ */
+export const clients = pgTable(
+  "clients",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // 각 시스템이 인가 요청에 실어 보내는 공개 식별자. 예: "rf-service-system"
+    clientId: text("client_id").notNull(),
+    name: text("name").notNull(), // "DSS A/S 관리 시스템"
+    description: text("description"),
+    // 평문 저장 금지. sha256 hex만 남긴다. 발급 시 콘솔에 딱 한 번 보여주고
+    // 잃어버리면 재발급만 가능하다 — 복구는 원리상 불가능하다.
+    clientSecretHash: text("client_secret_hash").notNull(),
+    clientSecretRotatedAt: timestamp("client_secret_rotated_at", {
+      withTimezone: true,
+    }),
+    // ⚠️ 정확 일치(exact string match)로만 검증한다. 와일드카드도, 접두사
+    // 일치도, 정규화도 하지 않는다. 정규화를 시작하면 등록값과 요청값의
+    // 정규화 결과가 우연히 겹치는 우회 경로가 생긴다.
+    redirectUris: text("redirect_uris").array().notNull(),
+    postLogoutRedirectUris: text("post_logout_redirect_uris")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    // true면 user_client_grants에 행이 있어야 이 시스템에 들어갈 수 있다.
+    requiresGrant: boolean("requires_grant").notNull().default(true),
+    isActive: boolean("is_active").notNull().default(true),
+    // 포털 앱 런처(/apps) 타일 표시용
+    launcherUrl: text("launcher_url"),
+    launcherIcon: text("launcher_icon"),
+    sortOrder: integer("sort_order").notNull().default(100),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [uniqueIndex("clients_client_id_unique").on(table.clientId)]
+);

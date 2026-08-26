@@ -1,0 +1,34 @@
+# dss-auth 전용 PostgreSQL.
+#
+# ⚠️ 반드시 `npm run db:up`으로 띄우세요.
+#   docker compose는 .env만 자동으로 읽고 .env.local은 읽지 않습니다. 그냥
+#   `docker compose up`을 하면 POSTGRES_PASSWORD가 빈 값이 되어 컨테이너가
+#   재시작 루프에 빠집니다. db:up 스크립트가 --env-file .env.local을 붙입니다.
+#
+# 포트가 5434인 이유: 같은 개발 PC에서 A/S 관리 시스템의 DB가 이미
+# 5432(dev)와 5433(staging)을 쓰고 있다. 두 프로젝트를 동시에 띄워야
+# 로그인 왕복을 테스트할 수 있으므로 포트가 겹치면 안 된다.
+#
+# 127.0.0.1에만 바인딩한다 — 개발 PC 밖에서는 DB에 직접 접속할 수 없다.
+services:
+  db-dev:
+    image: postgres:16.14-alpine3.24
+    container_name: dss-auth-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dss_auth_app
+      POSTGRES_PASSWORD: ${DEV_POSTGRES_PASSWORD}
+      POSTGRES_DB: dss_auth_dev
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - dss-auth-postgres-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dss_auth_app -d dss_auth_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  dss-auth-postgres-dev-data:
+    name: dss-auth-postgres-dev-data

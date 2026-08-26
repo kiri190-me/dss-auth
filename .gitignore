@@ -1,0 +1,57 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (.env.example is a safe placeholder template and is tracked)
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# RS256 서명 키. 개인키가 저장소에 실리면 전 시스템의 통행증을 위조할 수 있다.
+# 폴더 자체는 유지하되 내용물은 절대 커밋하지 않는다.
+/keys/*
+!/keys/.gitkeep
+
+# DB 덤프/백업
+/backups/
+*.dump
+*.backup
+
+# 로컬 전용 작업 노트 (AGENTS.md/CLAUDE.md는 next dev가 생성하는
+# 프레임워크 문서라 커밋한다 — CLAUDE.md가 AGENTS.md를 참조하므로
+# 한쪽만 빼면 깨진다)
+HANDOFF.md
