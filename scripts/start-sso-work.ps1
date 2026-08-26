@@ -7,12 +7,19 @@
     RF_Service_System의 start-work.ps1과 같은 철학이다. 다만 이쪽은
     **저장소가 둘**이라 한쪽만 띄우면 로그인 왕복을 확인할 수 없다.
 
-    창이 셋으로 나뉜다. 한 창에 다 넣으면 두 서버의 로그와 대화가 뒤섞여
-    셋 다 읽기 어려워진다.
+    창이 넷으로 나뉜다. 한 창에 다 넣으면 두 서버의 로그와 대화가 뒤섞여
+    넷 다 읽기 어려워진다.
 
       이 창              dss-auth 개발 서버 (3100)
       두 번째 창          A/S 관리 시스템 스택 (3000)
-      세 번째 창          Claude Code
+      세 번째 창          Claude Code — 로그인 포털 (dss-auth)
+      네 번째 창          Claude Code — A/S 관리 시스템
+
+    ── Claude를 저장소마다 따로 띄우는 이유 ──────────────────────────────
+    Claude는 자기가 켜진 폴더를 작업 폴더로 삼는다. 한 창으로 두 저장소를
+    오가면 그 창의 지시서·기록·슬래시 명령이 반대쪽 저장소 것과 섞인다.
+    저장소마다 한 창씩 두면 각자 제 자리에서 /로그인작업시작, /작업시작을
+    그대로 쓸 수 있다.
 
     ── Wi-Fi 주소를 확인하는 이유 ────────────────────────────────────────
     카카오는 Redirect URI를 문자 단위로 대조한다. 사무실 Wi-Fi가 바뀌면
@@ -205,20 +212,25 @@ if ($NoServer) {
 # ── 6. A/S 관리 시스템 (별도 창) ──────────────────────────────────────────
 # 로그인 왕복을 보려면 두 서버가 동시에 떠 있어야 한다. 저쪽은 Docker 확인부터
 # 상태 점검까지 자기 스크립트가 이미 잘 하고 있으므로 그대로 부른다.
-# Claude는 켜지 않는다 — 대화 창은 하나면 충분하다.
+# Claude도 저쪽 스크립트에 맡긴다 — 그래야 A/S 저장소를 작업 폴더로 잡는다.
 if (-not $SkipAsSystem) {
     Write-Step "A/S 관리 시스템 시작"
     if (Test-Path $AsStarter) {
-        Start-Process cmd -ArgumentList '/c', "title A-S 관리 시스템 - 서버 && cd /d `"$AsRepo`" && powershell -NoProfile -ExecutionPolicy Bypass -File `"$AsStarter`"" | Out-Null
+        $asArgs = if ($WithClaude) { ' -WithClaude' } else { '' }
+        Start-Process cmd -ArgumentList '/c', "title A-S 관리 시스템 - 서버 && cd /d `"$AsRepo`" && powershell -NoProfile -ExecutionPolicy Bypass -File `"$AsStarter`"$asArgs" | Out-Null
         Write-Ok "별도 창에서 실행 중 (http://localhost:3000)"
+        # 저쪽 Claude는 Docker·DB 점검을 마친 뒤에 뜬다. 몇십 초 늦게 나타나도
+        # 빠진 것이 아니다.
+        if ($WithClaude) { Write-Info "그 창의 점검이 끝나면 A/S용 Claude 창이 따로 뜹니다." }
     } else {
         Write-Warn2 "A/S 시스템 시작 스크립트를 찾을 수 없습니다: $AsStarter"
     }
 }
 
-# ── 7. Claude Code (선택) ────────────────────────────────────────────────
+# ── 7. Claude Code — 로그인 포털용 (선택) ────────────────────────────────
+# A/S 저장소용 Claude는 6번에서 저쪽 스크립트가 자기 폴더에서 띄운다.
 if ($WithClaude) {
-    Write-Step "Claude Code 실행"
+    Write-Step "Claude Code 실행 (로그인 포털)"
     $claude = (Get-Command claude -ErrorAction SilentlyContinue)
     if (-not $claude) {
         Write-Warn2 "claude 명령을 찾을 수 없어 건너뜁니다."
@@ -226,7 +238,10 @@ if ($WithClaude) {
     } else {
         Start-Process cmd -ArgumentList '/c', "title Claude - DSS 통합 로그인 && cd /d `"$RepoRoot`" && claude" | Out-Null
         Write-Ok "별도 창에서 실행 중"
-        Write-Info "그 창에서 /로그인작업시작 을 치면 상태 확인부터 시작합니다."
+        Write-Info "이 창(Claude - DSS 통합 로그인)에서 /로그인작업시작"
+        if (-not $SkipAsSystem) {
+            Write-Info "A/S 창(Claude - RF_Service_System)에서는 /작업시작"
+        }
     }
 }
 
