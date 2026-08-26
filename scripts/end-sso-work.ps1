@@ -37,6 +37,11 @@
 .PARAMETER DryRun
     무엇을 할지 보여 주기만 하고 실제로는 아무것도 끄지 않는다.
 
+.PARAMETER NoFooter
+    마지막 "정리 끝" 인사를 찍지 않는다. 바탕화면 '작업 종료'가 두 스크립트를
+    이어 부를 때, 끝인사가 두 번 나오면 어디가 진짜 끝인지 알 수 없다.
+    그 자리에서는 ..\..\end-all.ps1이 한 번만 인사한다.
+
 .EXAMPLE
     npm run work:end
     npm run work:end -- -Force
@@ -45,7 +50,8 @@
 [CmdletBinding()]
 param(
     [switch]$Force,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$NoFooter
 )
 
 $ErrorActionPreference = 'Stop'
@@ -161,6 +167,8 @@ if ($running -ne $Container) {
     }
 }
 
-Write-Host ""
-Write-Host "════ 로그인 포털 정리 끝 ════" -ForegroundColor White
-Write-Host ""
+if (-not $NoFooter) {
+    Write-Host ""
+    Write-Host "════ 로그인 포털 정리 끝 ════" -ForegroundColor White
+    Write-Host ""
+}
