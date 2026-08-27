@@ -89,6 +89,22 @@ export default async function SignInPage({
         <br />
         카카오에서 받아오는 정보는 회원번호와 닉네임뿐입니다.
       </p>
+
+      {/*
+        비상 로그인 통로. 눈에 띄지 않게 두되 숨기지는 않는다 — 이 링크가
+        필요해지는 순간은 카카오가 죽어 위 버튼이 아무 일도 하지 않을 때이고,
+        그때 주소를 외우고 있어야만 들어갈 수 있으면 통로가 없는 것과 같다.
+      */}
+      <a
+        href={
+          safeReturnTo
+            ? `/signin/emergency?returnTo=${encodeURIComponent(safeReturnTo)}`
+            : "/signin/emergency"
+        }
+        className="mt-8 text-center text-xs text-zinc-400 underline underline-offset-2 hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-400"
+      >
+        카카오를 쓸 수 없나요?
+      </a>
     </main>
   );
 }
