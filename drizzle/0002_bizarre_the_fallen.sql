@@ -1,0 +1,1 @@
+ALTER TYPE "public"."auth_audit_action" ADD VALUE 'GRANT_ROLE_CHANGED' BEFORE 'TOKEN_ISSUED';

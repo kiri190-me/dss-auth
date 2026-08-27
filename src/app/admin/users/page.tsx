@@ -1,7 +1,19 @@
 import type { Metadata } from "next";
+import {
+  GRANTED_NO_ROLE,
+  NO_ACCESS,
+} from "@/lib/auth/client-access-values";
 import { requirePortalAdmin } from "@/lib/auth/portal-admin";
+import {
+  indexGrants,
+  listClientsForAdmin,
+  listGrantsForAdmin,
+  type AdminClientRow,
+  type AdminGrantRow,
+} from "@/lib/db/queries/admin-access";
 import { listUsersForAdmin, type AdminUserRow } from "@/lib/db/queries/admin-users";
 import { formatDateTime } from "@/lib/format";
+import { setClientAccess } from "@/lib/server/actions/admin-access";
 import {
   approveUser,
   reactivateUser,
@@ -37,6 +49,119 @@ function ProviderBadges({ providers }: { providers: string | null }) {
     .map((code) => PROVIDER_LABELS[code] ?? code)
     .join(" · ");
   return <span className="text-xs text-zinc-500">{names}</span>;
+}
+
+/**
+ * 시스템 하나에 대한 접근·역할 칸.
+ *
+ * select를 바꾸면 곧바로 제출한다(별도 저장 버튼 없음). 저장 버튼을 두면
+ * 사용자 수 × 시스템 수만큼의 버튼이 생기고, 바꿔놓고 누르지 않아 반영되지
+ * 않는 사고가 난다.
+ *
+ * ⚠️ 여기서 고른 역할이 그 시스템의 권한을 그대로 정한다. A/S 관리 시스템은
+ * 로그인할 때마다 이 값으로 자기 users.role을 덮어쓴다.
+ */
+function ClientAccessRow({
+  user,
+  client,
+  grant,
+}: {
+  user: AdminUserRow;
+  client: AdminClientRow;
+  grant: AdminGrantRow | undefined;
+}) {
+  const usesRoles = client.availableRoles.length > 0;
+  const current = !grant
+    ? NO_ACCESS
+    : usesRoles
+      ? (grant.role ?? NO_ACCESS)
+      : GRANTED_NO_ROLE;
+
+  // 전 직원 공개 시스템은 부여 행이 없어도 들어간다. 그 사실을 숨기고
+  // "권한 없음"만 보여주면 관리자가 오해한다.
+  const openToAll = !client.requiresGrant;
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 py-1.5">
+      <div className="min-w-0">
+        <span className="text-sm">{client.name}</span>
+        {client.isActive ? null : (
+          <span className="ml-1.5 text-xs text-amber-600">비활성</span>
+        )}
+        {openToAll ? (
+          <span className="ml-1.5 text-xs text-zinc-500">전 직원 공개</span>
+        ) : null}
+        {usesRoles && grant && grant.role === null ? (
+          <span className="ml-1.5 text-xs text-amber-600">역할 없음</span>
+        ) : null}
+      </div>
+
+      <form action={setClientAccess}>
+        <input type="hidden" name="userId" value={user.id} />
+        <input type="hidden" name="clientId" value={client.id} />
+        <select
+          name="value"
+          defaultValue={current}
+          aria-label={`${user.displayName} · ${client.name} 접근`}
+          className="rounded-md border border-zinc-300 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700"
+        >
+          <option value={NO_ACCESS}>권한 없음</option>
+          {usesRoles ? (
+            client.availableRoles.map((role) => (
+              <option key={role} value={role}>
+                {role}
+              </option>
+            ))
+          ) : (
+            <option value={GRANTED_NO_ROLE}>권한 있음</option>
+          )}
+        </select>
+        {/*
+          자바스크립트 없이도 동작해야 하므로 onChange 자동 제출에 기대지
+          않는다. 작은 적용 버튼을 함께 둔다.
+        */}
+        <button type="submit" className={`ml-1.5 ${BTN} ${BTN_PLAIN} py-1.5`}>
+          적용
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function ClientAccessBlock({
+  user,
+  clients,
+  grants,
+}: {
+  user: AdminUserRow;
+  clients: AdminClientRow[];
+  grants: Map<string, AdminGrantRow>;
+}) {
+  if (clients.length === 0) return null;
+
+  return (
+    <details className="mt-3">
+      <summary
+        className={`${BTN} ${BTN_PLAIN} inline-block cursor-pointer list-none`}
+      >
+        시스템 접근·역할
+      </summary>
+      <div className="mt-2 divide-y divide-zinc-200 rounded-md border border-zinc-200 px-3 dark:divide-zinc-800 dark:border-zinc-800">
+        {clients.map((client) => (
+          <ClientAccessRow
+            key={client.id}
+            user={user}
+            client={client}
+            grant={grants.get(`${user.id}:${client.id}`)}
+          />
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-zinc-500">
+        여기서 고른 역할이 그 시스템의 권한이 됩니다. 이미 로그인해 있는
+        사람에게는 다음 로그인부터 반영됩니다.
+      </p>
+    </details>
+  );
 }
 
 function ProfileFields({ user }: { user: AdminUserRow }) {
@@ -104,6 +229,8 @@ export default async function AdminUsersPage({
   const admin = await requirePortalAdmin();
   const { ok, error } = await searchParams;
   const all = await listUsersForAdmin();
+  const clientList = await listClientsForAdmin();
+  const grants = indexGrants(await listGrantsForAdmin());
 
   const pending = all.filter((user) => user.status === "PENDING");
   const active = all.filter((user) => user.status === "ACTIVE");
@@ -211,6 +338,12 @@ export default async function AdminUsersPage({
                     </button>
                   </form>
                 </details>
+
+                <ClientAccessBlock
+                  user={user}
+                  clients={clientList}
+                  grants={grants}
+                />
 
                 <div className="mt-3 flex flex-wrap items-start gap-2">
                   <form action={setPortalAdmin}>

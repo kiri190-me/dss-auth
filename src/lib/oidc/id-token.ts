@@ -24,6 +24,15 @@ export type IdTokenClaims = {
   authTime: Date;
   name: string;
   email: string | null;
+  /**
+   * 이 사용자가 **받는 그 시스템에서** 갖는 역할(user_client_grants.role).
+   *
+   * 시스템마다 다르므로 audience가 정해진 이 토큰에만 실린다. 역할을 쓰지
+   * 않는 시스템이거나 아직 지정되지 않았으면 null이고, 그때는 클레임 자체를
+   * 싣지 않는다 — 받는 쪽에서 "안 왔다"와 "빈 값이 왔다"를 구분할 수 있어야
+   * 한다.
+   */
+  role: string | null;
 };
 
 /**
@@ -52,6 +61,10 @@ export async function signIdToken(claims: IdTokenClaims): Promise<string> {
     // 정직하게 false로 둔다 — true로 두면 받는 쪽이 이메일을 신원 판단에
     // 쓸 수 있다고 오해한다.
     payload.email_verified = false;
+  }
+  // 역할도 같은 이유로 있을 때만 넣는다.
+  if (claims.role) {
+    payload.role = claims.role;
   }
 
   return new SignJWT(payload)

@@ -21,11 +21,14 @@ import {
   authorizationCodes,
   clients,
   ssoSessions,
+  userClientGrants,
   users,
 } from "../src/lib/db/schema";
 
 const ISSUER = (process.env.OIDC_ISSUER ?? "http://localhost:3100").replace(/\/+$/, "");
 const TEST_CLIENT_ID = "__e2e-check";
+/** 실제 시스템의 역할과 겹치지 않는 값을 쓴다 — 섞이면 진단이 어려워진다. */
+const TEST_ROLE = "__E2E_ROLE";
 const REDIRECT_URI = "http://localhost:9999/cb";
 
 const sha256 = (value: string) =>
@@ -89,6 +92,7 @@ async function main() {
       // 프로토콜이지 권한 모델이 아니다.
       requiresGrant: false,
       isActive: true,
+      availableRoles: [TEST_ROLE],
     })
     .returning({ id: clients.id });
 
@@ -117,6 +121,15 @@ async function main() {
     })
     .returning({ id: ssoSessions.id });
   const cookie = `dss_sso=${sessionToken}`;
+
+  // requiresGrant가 false라 접근에는 필요 없지만, 역할은 부여 행에만 있다.
+  // role 클레임이 실제로 실려 나가는지 보려면 행이 있어야 한다.
+  await db.insert(userClientGrants).values({
+    userId: testUser.id,
+    clientId: testClient.id,
+    role: TEST_ROLE,
+    grantedBy: testUser.id,
+  });
 
   console.log(`점검 사용자: ${testUser.displayName}\n`);
 
@@ -182,6 +195,11 @@ async function main() {
     check("nonce가 요청한 값과 같다", claims.nonce === nonce);
     check("auth_time이 들어 있다", typeof claims.auth_time === "number");
     check("sid(세션 id)가 들어 있다", claims.sid === testSession.id);
+    check(
+      "role이 그 시스템에서 부여받은 역할과 같다",
+      claims.role === TEST_ROLE,
+      String(claims.role)
+    );
 
     const userinfo = await fetch(`${ISSUER}/api/oidc/userinfo`, {
       headers: { authorization: `Bearer ${tokens.access_token}` },
@@ -322,6 +340,8 @@ async function main() {
     // ── 정리 ──
     await db.delete(authorizationCodes).where(eq(authorizationCodes.clientId, testClient.id));
     await db.delete(accessTokens).where(eq(accessTokens.clientId, testClient.id));
+    // 부여 행이 clients를 onDelete restrict로 참조한다 — 먼저 지워야 한다.
+    await db.delete(userClientGrants).where(eq(userClientGrants.clientId, testClient.id));
     await db.delete(clients).where(eq(clients.id, testClient.id));
     await db.delete(ssoSessions).where(eq(ssoSessions.id, testSession.id));
   }

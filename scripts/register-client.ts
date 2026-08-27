@@ -19,7 +19,13 @@
  *   npm run client:register -- --client-id rf-service-system --rotate
  *     → 시크릿만 새로 발급
  *
- * --redirect-uri는 여러 번 줄 수 있다.
+ *   npm run client:register -- --client-id rf-service-system \
+ *       --role SUPER_ADMIN --role ADMIN --role AS_ENGINEER
+ *     → 그 시스템이 쓰는 역할 목록을 등록한다. 포털 관리 화면이 이 목록으로
+ *       드롭다운을 그리고, 여기서 고른 값이 ID 토큰의 role 클레임이 된다.
+ *
+ * --redirect-uri와 --role은 여러 번 줄 수 있다. 둘 다 주지 않으면 기존
+ * 목록을 그대로 둔다(지우지 않는다).
  */
 import { randomBytes, createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -111,7 +117,16 @@ async function main() {
   }
 
   const [existing] = await db
-    .select({ id: clients.id, name: clients.name })
+    .select({
+      id: clients.id,
+      name: clients.name,
+      // 아래 shared에서 "주지 않은 값은 그대로 둔다"를 하려면 기존 값을
+      // 알아야 한다.
+      description: clients.description,
+      postLogoutRedirectUris: clients.postLogoutRedirectUris,
+      launcherUrl: clients.launcherUrl,
+      launcherIcon: clients.launcherIcon,
+    })
     .from(clients)
     .where(eq(clients.clientId, clientId))
     .limit(1);
@@ -170,13 +185,29 @@ async function main() {
     }
   }
 
+  const availableRoles = args.many("role");
+
+  // 주지 않은 값은 기존 값을 그대로 둔다.
+  //
+  // 예전에는 인자를 주지 않으면 null로 덮어썼다. 그래서 역할 목록만 더하려고
+  // --client-id --role 만 주면 설명·런처 주소·런처 아이콘·로그아웃 주소가
+  // 통째로 지워졌다. 등록 스크립트를 다시 부르는 이유는 대개 "한 가지를
+  // 고치려고"이므로, 나머지를 지우는 쪽이 놀라움이 크다.
+  const keep = <T>(next: T | undefined, previous: T | null | undefined): T | null =>
+    next ?? previous ?? null;
+
+  const postLogout = args.many("post-logout-redirect-uri");
+
   const shared = {
     name: name ?? existing?.name ?? clientId,
-    description: args.one("description") ?? null,
-    postLogoutRedirectUris: args.many("post-logout-redirect-uri"),
-    launcherUrl: args.one("launcher-url") ?? null,
-    launcherIcon: args.one("launcher-icon") ?? null,
+    description: keep(args.one("description"), existing?.description),
+    postLogoutRedirectUris:
+      postLogout.length > 0 ? postLogout : (existing?.postLogoutRedirectUris ?? []),
+    launcherUrl: keep(args.one("launcher-url"), existing?.launcherUrl),
+    launcherIcon: keep(args.one("launcher-icon"), existing?.launcherIcon),
     // 기본은 "권한을 받은 사람만". 열어두는 것보다 닫아두는 편이 안전하다.
+    // 이것만은 인자가 없으면 기본값으로 돌아간다 — 접근을 여는 결정은
+    // 매번 명시적이어야 하고, 실수로 열린 채 굳는 쪽이 더 위험하다.
     requiresGrant: !args.has("open-to-all"),
     updatedAt: new Date(),
   };
@@ -187,6 +218,10 @@ async function main() {
       .set({
         ...shared,
         ...(redirectUris.length > 0 ? { redirectUris } : {}),
+        // redirect-uri와 같은 취급 — 주지 않으면 기존 목록을 지우지 않는다.
+        // 역할 목록을 통째로 날리면 이미 부여된 역할들이 목록에 없는 값이
+        // 되어 관리 화면이 설명할 수 없는 상태가 된다.
+        ...(availableRoles.length > 0 ? { availableRoles } : {}),
       })
       .where(eq(clients.id, existing.id));
     console.log(`"${clientId}" 정보를 수정했습니다. (시크릿은 그대로입니다)`);
@@ -199,6 +234,7 @@ async function main() {
     clientId,
     clientSecretHash: secret.hash,
     redirectUris,
+    availableRoles,
     ...shared,
   });
 

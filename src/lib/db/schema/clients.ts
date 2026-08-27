@@ -39,6 +39,25 @@ export const clients = pgTable(
       .default(sql`'{}'::text[]`),
     // true면 user_client_grants에 행이 있어야 이 시스템에 들어갈 수 있다.
     requiresGrant: boolean("requires_grant").notNull().default(true),
+    /**
+     * 이 시스템이 쓰는 역할 목록. 포털 관리 화면이 드롭다운을 그릴 때만 쓴다.
+     *
+     * 포털에 역할 칸을 하나 두지 않고 시스템마다 목록을 갖게 한 이유:
+     * 역할은 시스템의 것이지 회사의 것이 아니다. A/S의 AS_ENGINEER는 다음에
+     * 붙을 팀의 시스템에서는 아무 의미가 없다. 포털이 특정 시스템의 역할
+     * 목록을 아는 순간 그 시스템 전용 코드가 포털에 스며든다.
+     *
+     * 비어 있으면 그 시스템은 역할을 쓰지 않는다는 뜻이고, 관리 화면은
+     * "권한 있음/없음"만 묻는다.
+     *
+     * ⚠️ 여기 적힌 값이 유효한지는 포털이 판단하지 않는다. 받는 시스템이
+     * 자기 목록과 대조해 모르는 값이면 거절해야 한다 — 포털의 오타가 그쪽
+     * 권한 모델을 흔들면 안 된다.
+     */
+    availableRoles: text("available_roles")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     isActive: boolean("is_active").notNull().default(true),
     // 포털 앱 런처(/apps) 타일 표시용
     launcherUrl: text("launcher_url"),

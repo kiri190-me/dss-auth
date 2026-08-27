@@ -23,6 +23,14 @@
  *   npm run client:grant -- --client rf-service-system --user 홍길동 --by 최희만 --revoke
  *     → 회수
  *
+ *   npm run client:grant -- --client rf-service-system --user 홍길동 \
+ *       --role AS_ENGINEER --by 최희만
+ *     → 부여하면서 그 시스템에서의 역할까지 지정한다. 이미 권한이 있으면
+ *       역할만 바꾼다.
+ *
+ * --role 로 줄 수 있는 값은 그 시스템에 등록된 목록뿐이다
+ * (clients.available_roles, npm run client:register -- --role 로 등록).
+ *
  * --user 와 --by 는 사용자 id(UUID) · 이메일 · 표시 이름 중 무엇으로도 준다.
  * 이름이 겹치면 거절하고 id를 요구한다.
  */
@@ -146,6 +154,7 @@ async function list(clientIdFilter?: string): Promise<void> {
       clientId: clients.clientId,
       name: clients.name,
       requiresGrant: clients.requiresGrant,
+      availableRoles: clients.availableRoles,
       isActive: clients.isActive,
     })
     .from(clients)
@@ -170,6 +179,7 @@ async function list(clientIdFilter?: string): Promise<void> {
         id: users.id,
         displayName: users.displayName,
         status: users.status,
+        role: userClientGrants.role,
         grantedAt: userClientGrants.grantedAt,
       })
       .from(userClientGrants)
@@ -180,6 +190,11 @@ async function list(clientIdFilter?: string): Promise<void> {
     const inactive = client.isActive ? "" : " · 비활성";
     console.log("");
     console.log(`${client.name}  [${client.clientId}]${inactive}`);
+    console.log(
+      client.availableRoles.length > 0
+        ? `  역할: ${client.availableRoles.join(" · ")}`
+        : "  역할을 쓰지 않는 시스템입니다."
+    );
 
     if (!client.requiresGrant) {
       console.log("  전 직원 공개 — 승인된 사람은 모두 들어갈 수 있습니다.");
@@ -198,7 +213,15 @@ async function list(clientIdFilter?: string): Promise<void> {
     for (const row of grantees) {
       const when = row.grantedAt.toISOString().slice(0, 10);
       const state = row.status === "ACTIVE" ? "" : ` (${row.status})`;
-      console.log(`    ${row.displayName}${state} · ${when} 부여`);
+      // 역할을 쓰는 시스템인데 역할이 비어 있으면 눈에 띄게 알린다. 그
+      // 사용자는 들어갈 수는 있지만 role 클레임 없이 들어가고, 받는 쪽이
+      // 그것을 어떻게 다룰지는 그쪽 사정이다.
+      const role = client.availableRoles.length === 0
+        ? ""
+        : row.role
+          ? ` · ${row.role}`
+          : " · ⚠ 역할 없음";
+      console.log(`    ${row.displayName}${state}${role} · ${when} 부여`);
       console.log(`      ${row.id}`);
     }
   }
@@ -246,6 +269,7 @@ async function main(): Promise<void> {
       clientId: clients.clientId,
       name: clients.name,
       requiresGrant: clients.requiresGrant,
+      availableRoles: clients.availableRoles,
       isActive: clients.isActive,
     })
     .from(clients)
@@ -279,8 +303,32 @@ async function main(): Promise<void> {
     return;
   }
 
+  // 역할은 그 시스템에 등록된 목록에서만 고를 수 있다. 오타 하나가 받는
+  // 쪽에서 "모르는 역할"이 되어 로그인을 막거나, 더 나쁘게는 그쪽이
+  // 관대하게 해석해 엉뚱한 권한이 되는 것을 여기서 끊는다.
+  const roleArg = args.one("role");
+  if (roleArg !== undefined) {
+    if (client.availableRoles.length === 0) {
+      console.error(`"${client.name}" 은(는) 역할을 쓰지 않는 시스템입니다.`);
+      console.error("역할 목록을 먼저 등록하세요:");
+      console.error(`  npm run client:register -- --client-id ${client.clientId} --role <역할> ...`);
+      process.exitCode = 1;
+      return;
+    }
+    if (!client.availableRoles.includes(roleArg)) {
+      console.error(`"${roleArg}" 은(는) "${client.name}" 의 역할이 아닙니다.`);
+      console.error(`쓸 수 있는 역할: ${client.availableRoles.join(" · ")}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   const [existing] = await db
-    .select({ id: userClientGrants.id, grantedAt: userClientGrants.grantedAt })
+    .select({
+      id: userClientGrants.id,
+      role: userClientGrants.role,
+      grantedAt: userClientGrants.grantedAt,
+    })
     .from(userClientGrants)
     .where(
       and(
@@ -317,7 +365,38 @@ async function main(): Promise<void> {
 
   if (existing) {
     const when = existing.grantedAt.toISOString().slice(0, 10);
-    console.log(`${target.displayName} 은(는) 이미 "${client.name}" 권한이 있습니다. (${when} 부여)`);
+
+    if (roleArg === undefined || roleArg === existing.role) {
+      const role = existing.role ? ` · 역할 ${existing.role}` : "";
+      console.log(
+        `${target.displayName} 은(는) 이미 "${client.name}" 권한이 있습니다. (${when} 부여${role})`
+      );
+      return;
+    }
+
+    await db
+      .update(userClientGrants)
+      .set({ role: roleArg })
+      .where(eq(userClientGrants.id, existing.id));
+
+    await audit({
+      actorUserId: actor.id,
+      actionType: "GRANT_ROLE_CHANGED",
+      targetEntity: "user_client_grants",
+      targetRecordId: existing.id,
+      previousValue: { role: existing.role },
+      newValue: {
+        role: roleArg,
+        userId: target.id,
+        displayName: target.displayName,
+      },
+      clientId: client.clientId,
+    });
+
+    console.log(
+      `${target.displayName} 의 "${client.name}" 역할을 ${existing.role ?? "(없음)"} → ${roleArg} 로 바꿨습니다.`
+    );
+    console.log("이미 로그인해 있는 세션에는 반영되지 않습니다 — 다음 로그인부터입니다.");
     return;
   }
 
@@ -326,6 +405,7 @@ async function main(): Promise<void> {
     .values({
       userId: target.id,
       clientId: client.id,
+      role: roleArg ?? null,
       grantedBy: actor.id,
     })
     .returning({ id: userClientGrants.id });
@@ -335,11 +415,24 @@ async function main(): Promise<void> {
     actionType: "GRANT_ADDED",
     targetEntity: "user_client_grants",
     targetRecordId: inserted.id,
-    newValue: { userId: target.id, displayName: target.displayName },
+    newValue: {
+      userId: target.id,
+      displayName: target.displayName,
+      role: roleArg ?? null,
+    },
     clientId: client.clientId,
   });
 
-  console.log(`${target.displayName} 에게 "${client.name}" 접근 권한을 부여했습니다.`);
+  const grantedRole = roleArg ? ` (역할 ${roleArg})` : "";
+  console.log(
+    `${target.displayName} 에게 "${client.name}" 접근 권한을 부여했습니다.${grantedRole}`
+  );
+
+  if (!roleArg && client.availableRoles.length > 0) {
+    console.log("");
+    console.log("  ⚠ 역할을 지정하지 않았습니다. role 클레임 없이 들어갑니다.");
+    console.log(`     --role <${client.availableRoles.join("|")}> 로 지정하세요.`);
+  }
 
   if (!client.requiresGrant) {
     console.log("");

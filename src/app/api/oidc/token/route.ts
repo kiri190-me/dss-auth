@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { appendAuditLog } from "@/lib/db/mutations/audit";
 import {
   getActiveClient,
+  getClientRole,
   verifyClientSecret,
   type ClientRecord,
 } from "@/lib/db/queries/oidc-clients";
@@ -184,6 +185,11 @@ export async function POST(request: Request) {
 
   // ───── 발급 ─────
 
+  // 역할은 인가 코드에 굳혀 두지 않고 발급 직전에 다시 읽는다. 코드 발급과
+  // 토큰 교환 사이에 관리자가 역할을 바꿨다면 새 역할로 나가야 한다 —
+  // 사용자 상태를 바로 위에서 다시 확인하는 것과 같은 이유다.
+  const role = await getClientRole(user.id, client.id);
+
   const idToken = await signIdToken({
     subject: user.id,
     audience: client.clientId,
@@ -192,6 +198,7 @@ export async function POST(request: Request) {
     authTime: consumed.authTime,
     name: user.displayName,
     email: user.email,
+    role,
   });
 
   const accessToken = await issueAccessToken({

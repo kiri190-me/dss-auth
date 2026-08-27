@@ -1,4 +1,4 @@
-import { pgTable, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { clients } from "./clients";
 import { users } from "./users";
 
@@ -20,6 +20,18 @@ export const userClientGrants = pgTable(
     clientId: uuid("client_id")
       .notNull()
       .references(() => clients.id, { onDelete: "restrict" }),
+    /**
+     * 이 사람이 저 시스템에서 갖는 역할. ID 토큰의 role 클레임으로 나간다.
+     *
+     * 사용자가 아니라 부여 행에 붙는다 — 한 사람이 시스템마다 다른 역할일
+     * 수 있고(A/S에서는 영업, 다음 시스템에서는 관리자), 역할 목록 자체가
+     * 시스템마다 다르기 때문이다.
+     *
+     * nullable이다. 역할을 쓰지 않는 시스템도 있고, 역할 개념이 생기기 전에
+     * 만들어진 부여 행도 있다. null이면 role 클레임을 아예 싣지 않는다 —
+     * 받는 쪽에서 "클레임이 없다"와 "빈 역할이다"는 다르게 다뤄야 한다.
+     */
+    role: text("role"),
     grantedAt: timestamp("granted_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

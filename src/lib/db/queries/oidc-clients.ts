@@ -71,3 +71,28 @@ export async function hasClientAccess(
     .limit(1);
   return Boolean(row);
 }
+
+/**
+ * 이 사람이 저 시스템에서 갖는 역할. 없으면 null.
+ *
+ * 접근 판정(hasClientAccess)과 따로 두는 이유: 역할을 쓰지 않는 시스템도
+ * 있고, 전 직원 공개(requiresGrant=false) 시스템은 부여 행 없이도 들어가므로
+ * 역할이 없는 것이 정상이다. 두 질문을 한 함수로 합치면 "접근은 되는데
+ * 역할이 없다"는 정상 상태를 표현하기 어려워진다.
+ */
+export async function getClientRole(
+  userId: string,
+  clientRecordId: string
+): Promise<string | null> {
+  const [row] = await db
+    .select({ role: userClientGrants.role })
+    .from(userClientGrants)
+    .where(
+      and(
+        eq(userClientGrants.userId, userId),
+        eq(userClientGrants.clientId, clientRecordId)
+      )
+    )
+    .limit(1);
+  return row?.role ?? null;
+}

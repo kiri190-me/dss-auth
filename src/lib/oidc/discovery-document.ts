@@ -50,6 +50,9 @@ export function buildDiscoveryDocument(issuer: string) {
       "name",
       "preferred_username",
       "email",
+      // 표준 클레임이 아니다. 값은 받는 시스템마다 다르고(그 시스템의 역할
+      // 목록에서 온다), 지정되지 않았으면 아예 실리지 않는다.
+      "role",
     ],
     // 지원하지 않음을 명시한다. 생략하면 기본값이 false지만, 적어두면
     // 연동하는 쪽이 문서를 뒤지지 않아도 된다.

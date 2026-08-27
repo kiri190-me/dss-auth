@@ -27,6 +27,11 @@ export const authAuditActionEnum = pgEnum("auth_audit_action", [
   "CLIENT_SECRET_ROTATED",
   "GRANT_ADDED",
   "GRANT_REMOVED",
+  // 접근 권한은 그대로 두고 역할만 바꾼 경우. GRANT_ADDED로 뭉뚱그리지 않는
+  // 이유: 역할은 받는 시스템의 권한을 그대로 정한다(A/S는 이 값으로
+  // users.role을 덮어쓴다). 누가 누구를 언제 최고관리자로 올렸는지가
+  // "권한을 줬다"와 같은 줄에 섞이면 안 된다.
+  "GRANT_ROLE_CHANGED",
   "TOKEN_ISSUED",
   // 인가 코드가 두 번 제시되었다 — 탈취 또는 구현 오류의 신호다.
   "CODE_REPLAY_DETECTED",
