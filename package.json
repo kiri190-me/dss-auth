@@ -14,6 +14,7 @@
     "db:purge": "node --env-file=.env.local --import tsx scripts/purge-expired.ts",
     "backup": "node --env-file=.env.local --import tsx scripts/backup.ts",
     "key:generate": "node --env-file=.env.local --import tsx scripts/generate-signing-key.ts",
+    "icons": "tsx scripts/generate-icons.ts",
     "client:grant": "node --env-file=.env.local --import tsx scripts/grant-client-access.ts",
     "client:register": "node --env-file=.env.local --import tsx scripts/register-client.ts",
     "test": "node --import tsx --test src/lib/crypto/hash.test.ts src/lib/crypto/totp.test.ts src/lib/config/transport-check.test.ts src/lib/db/retention.test.ts src/lib/auth/emergency-lockout.test.ts src/lib/auth/audit-labels.test.ts src/lib/crypto/public-jwk.test.ts src/lib/oidc/pkce.test.ts src/lib/oidc/redirect-uri.test.ts src/lib/oidc/authorize-params.test.ts src/lib/oidc/discovery-document.test.ts",

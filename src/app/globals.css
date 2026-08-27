@@ -20,8 +20,40 @@
   }
 }
 
+html {
+  height: 100%;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+
+  /*
+   * layout.tsx가 viewportFit: "cover"를 켰으므로 화면 전체를 쓴다. 그 대가로
+   * 노치와 홈 인디케이터가 콘텐츠를 덮을 수 있어, 그만큼을 여기서 되돌린다.
+   * 화면마다 따로 넣지 않고 한 곳에 두는 이유: 이 포털의 화면은 전부 가운데
+   * 한 단이라 예외가 없고, 화면이 늘 때마다 기억해야 하는 일을 만들지 않는다.
+   */
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+
+  min-height: 100%;
+}
+
+/*
+ * 모바일에서 100%는 하단 툴바가 접힌 "큰 뷰포트" 기준이라 화면 아래가 남는다.
+ * dvh가 실제로 보이는 높이다.
+ *
+ * ⚠️ 겹쳐쓰기 폴백(min-height: 100%; min-height: 100dvh;)을 쓰지 않는다 —
+ * A/S 시스템에서 CSS 최적화가 앞줄을 실제로 삭제하는 것을 컴파일된 청크에서
+ * 확인했다. 반드시 @supports로 나눈다.
+ */
+@supports (height: 100dvh) {
+  body {
+    min-height: 100dvh;
+  }
 }

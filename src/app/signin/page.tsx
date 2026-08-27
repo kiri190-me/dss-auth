@@ -55,7 +55,7 @@ export default async function SignInPage({
     : "/api/kakao/start";
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-sm flex-col justify-center px-6 py-12">
+    <main className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center px-6 py-12">
       <div className="text-center">
         <h1 className="text-2xl font-bold tracking-tight">DSS</h1>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">

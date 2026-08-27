@@ -28,7 +28,7 @@ export default async function NoAccessPage({
   const client = clientId ? await getActiveClient(clientId) : null;
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-sm flex-col justify-center px-6 py-12 text-center">
+    <main className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center px-6 py-12 text-center">
       <div className="text-4xl" aria-hidden="true">
         🔒
       </div>
