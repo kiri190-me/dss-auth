@@ -86,6 +86,7 @@ export async function GET(request: NextRequest) {
     query.get("post_logout_redirect_uri")
   );
 
+  // post_logout_redirect_uri를 주지 않은 클라이언트는 로그인 화면에 남는다.
   let destination = "/signin";
   if (target) {
     const url = new URL(target);
