@@ -43,6 +43,18 @@ const kakaoJwks = createRemoteJWKSet(new URL(KAKAO_JWKS_URI));
  */
 const KAKAO_SCOPE = "openid profile_nickname";
 
+/**
+ * `prompt`를 붙이지 않는다 — 카카오가 기억하고 있으면 그대로 통과시킨다.
+ *
+ * 한 번 `prompt=login`을 붙여 봤다가 되돌렸다. 로그아웃 뒤에 카카오가 아이디와
+ * 비밀번호를 다시 묻는 것이 통합 로그인의 목적과 정면으로 어긋난다 — 로그인을
+ * 한 번만 하려고 만든 물건이다.
+ *
+ * 대신 로그아웃이 지우는 것은 **우리 세션**이다(sso_sessions에서 폐기). 카카오가
+ * 이 브라우저를 기억하는 것과, 이 사람이 사내 시스템에 들어와 있는 것은 다른
+ * 문제다. 공용 PC에서 카카오 계정까지 끊으려면 카카오에서 로그아웃해야 하고,
+ * 그건 우리가 대신해 줄 수 있는 일이 아니다.
+ */
 export function buildKakaoAuthorizeUrl(params: {
   state: string;
   nonce: string;
