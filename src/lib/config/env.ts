@@ -1,4 +1,5 @@
 import "server-only";
+import { checkTransportConfig } from "./transport-check";
 
 /**
  * 환경변수 읽기.
@@ -27,8 +28,25 @@ function required(name: string): string {
  * 끝의 슬래시를 제거한다 — "http://x/" 와 "http://x" 가 섞이면 iss 대조가
  * 실패하는데, 원인을 찾기가 매우 어려운 종류의 버그다.
  */
+// 요청마다 다시 검사할 이유가 없다. 환경변수는 프로세스 수명 동안 바뀌지 않는다.
+let issuerCache: string | null = null;
+
 export function getIssuer(): string {
-  return required("OIDC_ISSUER").replace(/\/+$/, "");
+  if (issuerCache !== null) return issuerCache;
+
+  const issuer = required("OIDC_ISSUER").replace(/\/+$/, "");
+
+  // 전송 설정이 서로 모순되면 여기서 멈춘다. 판정 규칙과 그 근거는
+  // transport-check.ts에 있다(테스트로 고정하기 위해 분리했다).
+  const problem = checkTransportConfig({
+    issuer,
+    httpRedirectUrisAllowed: process.env.OIDC_ALLOW_HTTP_REDIRECT_URIS === "true",
+    isProduction: process.env.NODE_ENV === "production",
+  });
+  if (problem) throw new Error(problem.message);
+
+  issuerCache = issuer;
+  return issuer;
 }
 
 export function getKakaoClientId(): string {

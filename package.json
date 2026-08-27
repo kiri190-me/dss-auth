@@ -14,7 +14,7 @@
     "key:generate": "node --env-file=.env.local --import tsx scripts/generate-signing-key.ts",
     "client:grant": "node --env-file=.env.local --import tsx scripts/grant-client-access.ts",
     "client:register": "node --env-file=.env.local --import tsx scripts/register-client.ts",
-    "test": "node --import tsx --test src/lib/crypto/hash.test.ts src/lib/auth/emergency-lockout.test.ts src/lib/crypto/public-jwk.test.ts src/lib/oidc/pkce.test.ts src/lib/oidc/redirect-uri.test.ts src/lib/oidc/authorize-params.test.ts src/lib/oidc/discovery-document.test.ts",
+    "test": "node --import tsx --test src/lib/crypto/hash.test.ts src/lib/config/transport-check.test.ts src/lib/auth/emergency-lockout.test.ts src/lib/crypto/public-jwk.test.ts src/lib/oidc/pkce.test.ts src/lib/oidc/redirect-uri.test.ts src/lib/oidc/authorize-params.test.ts src/lib/oidc/discovery-document.test.ts",
     "db:up": "docker compose --env-file .env.local up -d db-dev",
     "db:down": "docker compose --env-file .env.local down",
     "db:psql": "docker exec -it dss-auth-postgres-dev psql -U dss_auth_app -d dss_auth_dev",
