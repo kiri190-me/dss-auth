@@ -1,5 +1,6 @@
 import { secureCookiesEnabled } from "@/lib/config/env";
 import { appendAuditLog } from "@/lib/db/mutations/audit";
+import { notifyBackchannelLogout } from "@/lib/oidc/backchannel-logout";
 import { clientIp, redirectTo } from "@/lib/http/redirect";
 import {
   readSsoSession,
@@ -32,6 +33,14 @@ export async function POST(request: Request) {
       targetRecordId: session.sessionId,
       sourceIp: clientIp(request),
       userAgent: request.headers.get("user-agent"),
+    });
+
+    // 각 시스템에도 알린다. 우리 쿠키만 지우면 각 시스템이 발급한 자기
+    // 쿠키는 그대로 살아 있다. 실패해도 로그아웃 자체는 진행한다.
+    await notifyBackchannelLogout({
+      userId: session.userId,
+      sessionId: session.sessionId,
+      reason: "LOGOUT",
     });
   }
 

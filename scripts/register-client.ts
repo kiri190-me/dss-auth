@@ -16,6 +16,10 @@
  *       --launcher-url http://192.168.1.132:3000/dashboard \
  *       --launcher-icon 🔧
  *
+ *   npm run client:register -- --client-id rf-service-system \
+ *       --backchannel-logout-uri http://192.168.1.132:3000/api/auth/sso/backchannel-logout
+ *     → 세션이 끊겼을 때 알려 줄 주소를 등록한다. 없으면 알리지 않는다.
+ *
  *   npm run client:register -- --client-id rf-service-system --rotate
  *     → 시크릿만 새로 발급
  *
@@ -126,6 +130,7 @@ async function main() {
       postLogoutRedirectUris: clients.postLogoutRedirectUris,
       launcherUrl: clients.launcherUrl,
       launcherIcon: clients.launcherIcon,
+      backchannelLogoutUri: clients.backchannelLogoutUri,
     })
     .from(clients)
     .where(eq(clients.clientId, clientId))
@@ -204,6 +209,10 @@ async function main() {
     postLogoutRedirectUris:
       postLogout.length > 0 ? postLogout : (existing?.postLogoutRedirectUris ?? []),
     launcherUrl: keep(args.one("launcher-url"), existing?.launcherUrl),
+    backchannelLogoutUri: keep(
+      args.one("backchannel-logout-uri"),
+      existing?.backchannelLogoutUri
+    ),
     launcherIcon: keep(args.one("launcher-icon"), existing?.launcherIcon),
     // 기본은 "권한을 받은 사람만". 열어두는 것보다 닫아두는 편이 안전하다.
     // 이것만은 인자가 없으면 기본값으로 돌아간다 — 접근을 여는 결정은

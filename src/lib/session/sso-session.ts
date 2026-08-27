@@ -124,3 +124,23 @@ export async function revokeSsoSession(sessionId: string): Promise<void> {
     .set({ revokedAt: new Date() })
     .where(and(eq(ssoSessions.id, sessionId), isNull(ssoSessions.revokedAt)));
 }
+
+/**
+ * 이 사람의 살아 있는 세션을 전부 폐기하고, 폐기한 세션 id들을 돌려준다.
+ *
+ * 사용자를 정지시킬 때 쓴다. 한 사람이 여러 브라우저에 로그인해 있을 수
+ * 있고, 정지는 그 전부를 끊는 것이 맞다.
+ *
+ * id를 돌려주는 이유: 각 시스템에 보낼 백채널 로그아웃 토큰에 sid가
+ * 들어가기 때문이다. 폐기와 통보를 한 함수에 합치지 않는 것은, 폐기는
+ * 우리 DB 안의 일이고 통보는 바깥으로 나가는 일이라 실패했을 때의 처리가
+ * 서로 달라야 하기 때문이다.
+ */
+export async function revokeAllSessionsForUser(userId: string): Promise<string[]> {
+  const rows = await db
+    .update(ssoSessions)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(ssoSessions.userId, userId), isNull(ssoSessions.revokedAt)))
+    .returning({ id: ssoSessions.id });
+  return rows.map((row) => row.id);
+}

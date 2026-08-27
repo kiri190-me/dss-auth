@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { decodeJwt } from "jose";
 import { allowHttpRedirectUris, secureCookiesEnabled } from "@/lib/config/env";
 import { appendAuditLog } from "@/lib/db/mutations/audit";
+import { notifyBackchannelLogout } from "@/lib/oidc/backchannel-logout";
 import { getActiveClient } from "@/lib/db/queries/oidc-clients";
 import { clientIp, redirectTo } from "@/lib/http/redirect";
 import { isRegisteredRedirectUri } from "@/lib/oidc/redirect-uri";
@@ -77,6 +78,15 @@ export async function GET(request: NextRequest) {
       newValue: { via: "rp_initiated" },
       sourceIp: clientIp(request),
       userAgent: request.headers.get("user-agent"),
+    });
+
+    // 각 시스템에도 알린다. 우리 세션만 끊으면 각 시스템이 발급한 자기
+    // 쿠키는 그대로 살아 있다. 실패해도 로그아웃 자체는 진행한다 —
+    // 시스템 하나가 죽었다고 아무도 로그아웃할 수 없게 되면 안 된다.
+    await notifyBackchannelLogout({
+      userId: session.userId,
+      sessionId: session.sessionId,
+      reason: "LOGOUT",
     });
   }
 

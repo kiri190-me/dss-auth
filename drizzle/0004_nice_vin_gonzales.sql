@@ -1,0 +1,1 @@
+ALTER TABLE "clients" ADD COLUMN "backchannel_logout_uri" text;

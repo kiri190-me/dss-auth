@@ -37,6 +37,18 @@ export const clients = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    /**
+     * 세션이 끊겼을 때 알려 줄 주소(OIDC 백채널 로그아웃).
+     *
+     * 비어 있으면 알리지 않는다 — 통보를 받을 준비가 안 된 시스템에 계속
+     * 실패하는 요청을 보내면 로그만 지저분해진다. 붙일 준비가 된 시스템이
+     * 스스로 등록하는 구조다.
+     *
+     * ⚠️ 이 주소로는 서명된 토큰만 보낸다. 받는 쪽은 반드시 서명·iss·aud를
+     * 확인해야 한다 — 확인 없이 받으면 누구나 아무나를 로그아웃시킬 수 있는
+     * 창구가 된다.
+     */
+    backchannelLogoutUri: text("backchannel_logout_uri"),
     // true면 user_client_grants에 행이 있어야 이 시스템에 들어갈 수 있다.
     requiresGrant: boolean("requires_grant").notNull().default(true),
     /**

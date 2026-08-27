@@ -7,6 +7,8 @@ import { assertPortalAdmin } from "@/lib/auth/portal-admin";
 import { db } from "@/lib/db/client";
 import { appendAuditLog } from "@/lib/db/mutations/audit";
 import { users } from "@/lib/db/schema";
+import { notifyBackchannelLogout } from "@/lib/oidc/backchannel-logout";
+import { revokeAllSessionsForUser } from "@/lib/session/sso-session";
 
 const ADMIN_USERS_PATH = "/admin/users";
 
@@ -146,8 +148,12 @@ export async function updateUserProfile(formData: FormData) {
 /**
  * 계정 정지. 퇴사자 차단의 주 수단이다.
  *
- * 세션을 따로 폐기하지 않아도 즉시 막힌다 — 모든 화면이 매 요청 사용자
- * 상태를 다시 읽기 때문이다(sso-session.ts 참고).
+ * 포털 안에서는 세션을 폐기하지 않아도 즉시 막힌다 — 모든 화면이 매 요청
+ * 사용자 상태를 다시 읽기 때문이다(sso-session.ts 참고).
+ *
+ * 그러나 **각 시스템은 그렇지 않다.** 그쪽이 발급한 세션 쿠키는 자기 수명이
+ * 다할 때까지 살아 있고, 그쪽은 포털의 users 표를 보지 않는다. 그래서 아래에서
+ * 세션을 폐기하고 백채널 로그아웃으로 알린다.
  */
 export async function suspendUser(formData: FormData) {
   const actor = await assertPortalAdmin();
@@ -179,6 +185,23 @@ export async function suspendUser(formData: FormData) {
     previousValue: { status: target.status },
     newValue: { status: "SUSPENDED", reason: text(formData, "reason") },
   });
+
+  // 정지는 "지금부터 못 들어온다"만으로는 부족하다. 이미 들어가 있는 사람은
+  // 자기 세션이 만료될 때까지 계속 일할 수 있다 — 정지시킨 이유가 급한
+  // 것이었다면 그 몇 시간이 문제다.
+  //
+  // 포털 세션을 먼저 끊고, 각 시스템에도 알린다. 여기서 세션 id 대신
+  // 사용자 id로 훑는 이유: 그 사람이 여러 브라우저에 로그인해 있을 수 있고,
+  // 정지는 그 전부를 끊는 것이 맞다.
+  const revoked = await revokeAllSessionsForUser(target.id);
+  for (const sessionId of revoked) {
+    await notifyBackchannelLogout({
+      userId: target.id,
+      sessionId,
+      actorUserId: actor.userId,
+      reason: "SUSPENDED",
+    });
+  }
 
   done(`${target.displayName}님을 정지했습니다.`);
 }
