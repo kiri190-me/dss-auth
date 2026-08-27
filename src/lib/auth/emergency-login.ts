@@ -2,6 +2,7 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { hashPassword, verifyPassword } from "@/lib/crypto/hash";
+import { verifyTotp } from "@/lib/crypto/totp";
 import { db } from "@/lib/db/client";
 import { identities, users } from "@/lib/db/schema";
 import {
@@ -15,6 +16,8 @@ import {
 export type EmergencyLoginResult =
   | { outcome: "SESSION"; userId: string; displayName: string }
   | { outcome: "REJECTED"; code: "INVALID" | "NOT_ACTIVE" }
+  /** 비밀번호는 맞았지만 인증 코드가 없거나 틀렸다. */
+  | { outcome: "REJECTED"; code: "TOTP_REQUIRED" | "TOTP_INVALID" }
   | { outcome: "REJECTED"; code: "LOCKED"; minutesRemaining: number };
 
 /**
@@ -46,7 +49,9 @@ function getDummyHash(): string {
  */
 export async function resolveEmergencyLogin(
   loginId: string,
-  password: string
+  password: string,
+  /** 인증 앱의 6자리 코드. 2단계 인증을 켠 계정에서만 쓰인다. */
+  totpCodeInput?: string
 ): Promise<EmergencyLoginResult> {
   const trimmed = loginId.trim();
 
@@ -56,6 +61,9 @@ export async function resolveEmergencyLogin(
       passwordHash: identities.passwordHash,
       failedAttempts: identities.failedAttempts,
       lockedUntil: identities.lockedUntil,
+      totpSecret: identities.totpSecret,
+      totpConfirmedAt: identities.totpConfirmedAt,
+      totpLastStep: identities.totpLastStep,
       userId: users.id,
       displayName: users.displayName,
       status: users.status,
@@ -109,12 +117,64 @@ export async function resolveEmergencyLogin(
     return { outcome: "REJECTED", code: "INVALID" };
   }
 
-  // 비밀번호는 맞았다. 계정 상태와 무관하게 실패 기록은 지운다 — 상태 때문에
-  // 막힌 것을 실패 누적으로 잠그면 상태를 고친 뒤에도 못 들어온다.
-  await db
-    .update(identities)
-    .set({ ...CLEARED_LOCK_STATE, lastUsedAt: now })
-    .where(eq(identities.id, row.identityId));
+  // ── 2단계 인증 ──
+  //
+  // 비밀번호가 맞은 뒤에만 본다. 순서를 바꾸면 코드가 틀렸다는 응답만으로
+  // "이 아이디는 존재하고 2단계 인증이 켜져 있다"가 새어 나간다.
+  //
+  // totpConfirmedAt이 있을 때만 요구한다. 비밀키를 만들어 두기만 하고 아직
+  // 인증 앱으로 확인하지 않은 상태에서 요구하면, 잘못 옮겨 적은 사람이 그
+  // 즉시 비상 계정에서 잠긴다 — 하필 모든 것이 고장났을 때 쓰는 계정이다.
+  const totpRequired = row.totpConfirmedAt !== null && row.totpSecret !== null;
+
+  if (totpRequired) {
+    const code = (totpCodeInput ?? "").trim();
+    if (code === "") {
+      // 실패로 세지 않는다. 코드 칸을 비워 보낸 것은 틀린 시도가 아니라
+      // 아직 안 낸 것이고, 이것으로 잠그면 화면이 코드를 물어보기도 전에
+      // 계정이 잠긴다.
+      return { outcome: "REJECTED", code: "TOTP_REQUIRED" };
+    }
+
+    const verified = verifyTotp({
+      secret: row.totpSecret!,
+      code,
+      now: Math.floor(now.getTime() / 1000),
+      lastUsedStep: row.totpLastStep,
+    });
+
+    if (!verified.ok) {
+      // 비밀번호 실패와 같은 잠금을 쓴다. 두 자물쇠를 따로 세면 각각 5번씩
+      // 열 번을 시도할 수 있게 된다.
+      const next = afterFailure(state, now);
+      await db
+        .update(identities)
+        .set({ failedAttempts: next.failedAttempts, lockedUntil: next.lockedUntil })
+        .where(eq(identities.id, row.identityId));
+
+      if (isLocked(next, now)) {
+        return {
+          outcome: "REJECTED",
+          code: "LOCKED",
+          minutesRemaining: minutesUntilUnlock(next, now),
+        };
+      }
+      return { outcome: "REJECTED", code: "TOTP_INVALID" };
+    }
+
+    // 통과한 칸을 적어 둔다 — 같은 코드가 30초 안에 다시 쓰이는 것을 막는다.
+    await db
+      .update(identities)
+      .set({ ...CLEARED_LOCK_STATE, lastUsedAt: now, totpLastStep: verified.step })
+      .where(eq(identities.id, row.identityId));
+  } else {
+    // 비밀번호는 맞았다. 계정 상태와 무관하게 실패 기록은 지운다 — 상태 때문에
+    // 막힌 것을 실패 누적으로 잠그면 상태를 고친 뒤에도 못 들어온다.
+    await db
+      .update(identities)
+      .set({ ...CLEARED_LOCK_STATE, lastUsedAt: now })
+      .where(eq(identities.id, row.identityId));
+  }
 
   if (row.status !== "ACTIVE") {
     return { outcome: "REJECTED", code: "NOT_ACTIVE" };

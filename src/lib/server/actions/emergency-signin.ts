@@ -15,6 +15,35 @@ import {
 const EMERGENCY_PATH = "/signin/emergency";
 
 /**
+ * 거절 사유를 주소창의 값으로 옮긴다.
+ *
+ * TOTP_REQUIRED와 TOTP_INVALID를 따로 두는 이유: 둘 다 "코드를 다시 내라"로
+ * 끝나지만, 앞의 것은 아직 안 낸 것이고 뒤의 것은 실패로 세어진 것이다.
+ * 화면이 그 차이를 말해 주지 않으면 사람은 자기가 몇 번 남았는지 모른다.
+ *
+ * 두 값 모두 비밀번호가 맞았다는 사실을 드러낸다. 그래도 괜찮은 이유는
+ * 이 지점에 닿으려면 이미 비밀번호를 알아야 하기 때문이다 — 모르는 사람에게
+ * 새는 정보가 아니다.
+ */
+function rejectionQuery(result: {
+  code: string;
+  minutesRemaining?: number;
+}): string {
+  switch (result.code) {
+    case "LOCKED":
+      return `error=locked&minutes=${result.minutesRemaining}`;
+    case "NOT_ACTIVE":
+      return "error=not_active";
+    case "TOTP_REQUIRED":
+      return "error=totp_required";
+    case "TOTP_INVALID":
+      return "error=totp_invalid";
+    default:
+      return "error=invalid";
+  }
+}
+
+/**
  * 비상 계정 로그인.
  *
  * 서버 액션으로 둔 이유: Next가 서버 액션 호출마다 Origin과 Host를 대조해
@@ -26,6 +55,7 @@ const EMERGENCY_PATH = "/signin/emergency";
 export async function emergencySignIn(formData: FormData): Promise<void> {
   const loginId = String(formData.get("loginId") ?? "");
   const password = String(formData.get("password") ?? "");
+  const totpCode = String(formData.get("totpCode") ?? "");
   const returnTo = sanitizeReturnTo(String(formData.get("returnTo") ?? "") || null);
 
   const headerList = await headers();
@@ -36,7 +66,7 @@ export async function emergencySignIn(formData: FormData): Promise<void> {
     redirect(`${EMERGENCY_PATH}?error=invalid`);
   }
 
-  const result = await resolveEmergencyLogin(loginId, password);
+  const result = await resolveEmergencyLogin(loginId, password, totpCode);
 
   if (result.outcome === "REJECTED") {
     await appendAuditLog({
@@ -48,11 +78,7 @@ export async function emergencySignIn(formData: FormData): Promise<void> {
       userAgent,
     });
 
-    const query =
-      result.code === "LOCKED"
-        ? `error=locked&minutes=${result.minutesRemaining}`
-        : `error=${result.code === "NOT_ACTIVE" ? "not_active" : "invalid"}`;
-    redirect(`${EMERGENCY_PATH}?${query}`);
+    redirect(`${EMERGENCY_PATH}?${rejectionQuery(result)}`);
   }
 
   const { token, sessionId } = await createSsoSession({

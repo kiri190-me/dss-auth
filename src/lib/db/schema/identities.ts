@@ -47,6 +47,29 @@ export const identities = pgTable(
     // 네이티브 빌드가 필요해 NAS Docker 이미지 빌드를 복잡하게 만든다.
     // 형식: "scrypt$N$r$p$<saltB64>$<hashB64>"
     passwordHash: text("password_hash"),
+    /**
+     * TOTP 비밀키(base32). EMERGENCY 전용.
+     *
+     * 비밀번호와 달리 해시할 수 없다 — 코드를 검증하려면 원문이 필요하다.
+     * 즉 DB가 유출되면 이 값도 함께 나가고, 2단계 인증의 방어력이 그만큼
+     * 줄어든다. 그래도 두는 이유는 막으려는 것이 다르기 때문이다:
+     * 비밀번호 하나가 새는 상황(어깨너머, 금고에 적힌 종이, 재사용)에서
+     * 두 번째 자물쇠가 된다.
+     */
+    totpSecret: text("totp_secret"),
+    /**
+     * 인증 앱이 실제로 맞는 코드를 낸 것을 확인한 시각.
+     *
+     * 이 값이 있을 때만 로그인에서 코드를 요구한다. 비밀키를 만들자마자
+     * 요구하면, 앱에 잘못 옮겨 적은 사람이 그 즉시 비상 계정에서
+     * 잠긴다 — 하필 모든 것이 고장났을 때 쓰는 계정이다.
+     */
+    totpConfirmedAt: timestamp("totp_confirmed_at", { withTimezone: true }),
+    /**
+     * 마지막으로 통과한 시간 칸. 같은 코드를 30초 안에 두 번 쓰지 못하게 한다
+     * (어깨너머로 본 코드의 즉시 재사용).
+     */
+    totpLastStep: integer("totp_last_step"),
     failedAttempts: integer("failed_attempts").notNull().default(0),
     lockedUntil: timestamp("locked_until", { withTimezone: true }),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),

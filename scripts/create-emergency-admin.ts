@@ -26,11 +26,30 @@
  *
  *   npm run admin:emergency -- --unlock <아이디>
  *     → 실패 누적으로 걸린 잠금을 즉시 푼다
+ *
+ *   npm run admin:emergency -- --totp <아이디>
+ *     → 2단계 인증 비밀키를 만들어 보여준다 (아직 켜지지는 않는다)
+ *
+ *   npm run admin:emergency -- --totp-confirm <아이디> --code 123456
+ *     → 인증 앱이 낸 코드로 확인하고, 그때부터 로그인에 코드를 요구한다
+ *
+ *   npm run admin:emergency -- --totp-off <아이디>
+ *     → 2단계 인증을 끈다 (인증 앱이나 폰을 잃었을 때)
+ *
+ * 2단계 인증을 두 단계로 나눈 이유: 비밀키를 만들자마자 요구하면, 앱에 잘못
+ * 옮겨 적은 사람이 그 즉시 비상 계정에서 잠긴다 — 하필 모든 것이 고장났을 때
+ * 쓰는 계정이다. 확인 단계가 "그 앱이 실제로 맞는 코드를 낸다"를 증명한다.
+ *
+ * 복구 코드는 두지 않는다. 폰을 잃으면 서버에 접근해 --totp-off 를 돌리면
+ * 되고, 그것이 애초에 이 계정을 만들 수 있는 사람과 같은 자격이다. 복구
+ * 코드를 두면 종이에 적힌 또 하나의 비밀이 생기고, 그 종이는 대개 비밀번호
+ * 옆에 놓인다.
  */
 // 환경변수는 node --env-file=.env.local 로 주입한다(package.json 스크립트 참조).
 import { randomBytes } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { hashPassword } from "../src/lib/crypto/hash";
+import { generateTotpSecret, totpUri, verifyTotp } from "../src/lib/crypto/totp";
 import { db, pgClient } from "../src/lib/db/connection";
 import { auditLogs, identities, users } from "../src/lib/db/schema";
 
@@ -102,6 +121,8 @@ async function list() {
       failedAttempts: identities.failedAttempts,
       lockedUntil: identities.lockedUntil,
       lastUsedAt: identities.lastUsedAt,
+      totpConfirmedAt: identities.totpConfirmedAt,
+      totpSecret: identities.totpSecret,
       displayName: users.displayName,
       status: users.status,
       isPortalAdmin: users.isPortalAdmin,
@@ -132,8 +153,17 @@ async function list() {
       ? row.lastUsedAt.toISOString().slice(0, 16).replace("T", " ")
       : "쓴 적 없음";
 
+    // 2단계 인증은 켜졌는지, 만들다 만 상태인지, 아예 없는지 셋을 구분한다.
+    // 가운데 상태(비밀키는 있는데 확인 전)는 사람이 잊기 쉬운 자리다.
+    const totp = row.totpConfirmedAt
+      ? " · 2단계 인증 켜짐"
+      : row.totpSecret
+        ? " · ⚠ 2단계 인증 확인 전(아직 요구하지 않음)"
+        : " · 2단계 인증 없음";
+
     console.log(`  ${row.loginId}  (${row.displayName})`);
-    console.log(`    ${row.status}${admin}${locked} · 마지막 사용 ${used}`);
+    console.log(`    ${row.status}${admin}${locked}${totp}`);
+    console.log(`    마지막 사용 ${used}`);
     if (row.failedAttempts > 0) {
       console.log(`    연속 실패 ${row.failedAttempts}회`);
     }
@@ -263,14 +293,157 @@ async function unlock(loginId: string) {
   console.log(`"${loginId}" 의 잠금을 풀었습니다.`);
 }
 
+/** 2단계 인증 비밀키를 만들어 보여준다. 아직 켜지지는 않는다. */
+async function totpSetup(loginId: string) {
+  const row = await findIdentity(loginId);
+  if (!row) {
+    console.error(`"${loginId}" 라는 비상 계정이 없습니다.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const secret = generateTotpSecret();
+  await db
+    .update(identities)
+    // 확인 시각과 마지막 칸은 비운다. 비밀키를 바꾸면 이전 앱은 더 이상
+    // 맞지 않으므로, 켜져 있던 상태를 그대로 두면 아무도 못 들어온다.
+    .set({ totpSecret: secret, totpConfirmedAt: null, totpLastStep: null })
+    .where(eq(identities.id, row.identityId));
+
+  const uri = totpUri({
+    secret,
+    account: loginId,
+    issuer: "DSS 통합 로그인",
+  });
+
+  console.log("\n" + "─".repeat(64));
+  console.log("  인증 앱에 아래 키를 등록하세요 (수동 입력).");
+  console.log("─".repeat(64));
+  console.log(`\n  ${secret.replace(/(.{4})/g, "$1 ").trim()}\n`);
+  console.log("  QR을 쓰는 앱이라면 이 주소를 넣어도 됩니다:");
+  console.log(`  ${uri}\n`);
+  console.log("─".repeat(64));
+  console.log("  아직 켜지지 않았습니다. 앱에 뜬 코드로 확인해야 켜집니다:");
+  console.log(`    npm run admin:emergency -- --totp-confirm ${loginId} --code <6자리>`);
+  console.log("");
+  console.log("  확인 전까지는 지금처럼 비밀번호만으로 들어갑니다 — 앱에");
+  console.log("  잘못 넣은 채 잠기는 일을 막기 위해서입니다.");
+  console.log("─".repeat(64) + "\n");
+}
+
+/** 앱이 낸 코드로 확인하고, 그때부터 로그인에서 코드를 요구한다. */
+async function totpConfirm(loginId: string) {
+  const code = arg("code");
+  if (!code) {
+    console.error("--code 에 인증 앱에 뜬 6자리를 주세요.");
+    process.exitCode = 1;
+    return;
+  }
+
+  const [row] = await db
+    .select({
+      identityId: identities.id,
+      totpSecret: identities.totpSecret,
+      totpConfirmedAt: identities.totpConfirmedAt,
+    })
+    .from(identities)
+    .where(
+      and(
+        eq(identities.provider, "EMERGENCY"),
+        eq(identities.providerSubject, loginId)
+      )
+    )
+    .limit(1);
+
+  if (!row) {
+    console.error(`"${loginId}" 라는 비상 계정이 없습니다.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (!row.totpSecret) {
+    console.error("아직 비밀키가 없습니다. 먼저 --totp 로 만드세요.");
+    process.exitCode = 1;
+    return;
+  }
+
+  const verified = verifyTotp({
+    secret: row.totpSecret,
+    code,
+    now: Math.floor(Date.now() / 1000),
+  });
+
+  if (!verified.ok) {
+    console.error("코드가 맞지 않습니다.");
+    console.error("");
+    console.error("  · 앱에 뜬 코드가 곧 바뀌는 중이었다면 다음 코드로 다시 해보세요.");
+    console.error("  · 계속 틀리면 서버와 폰의 시계가 어긋난 것일 수 있습니다.");
+    console.error("  · 키를 잘못 옮겼다면 --totp 로 새로 만드세요.");
+    process.exitCode = 1;
+    return;
+  }
+
+  const now = new Date();
+  await db
+    .update(identities)
+    // 확인에 쓴 칸도 함께 적어 둔다 — 방금 그 코드로 곧바로 로그인하지
+    // 못하게 한다. 확인과 로그인은 다른 행위다.
+    .set({ totpConfirmedAt: now, totpLastStep: verified.step })
+    .where(eq(identities.id, row.identityId));
+
+  await db.insert(auditLogs).values({
+    actionType: "USER_UPDATED",
+    targetEntity: "identities",
+    targetRecordId: row.identityId,
+    newValue: { via: "EMERGENCY", action: "TOTP_ENABLED", loginId },
+  });
+
+  console.log(`"${loginId}" 의 2단계 인증을 켰습니다.`);
+  console.log("이제 로그인할 때 비밀번호와 인증 코드를 함께 넣습니다.");
+  if (row.totpConfirmedAt) {
+    console.log("(이전 인증 앱 등록은 더 이상 쓸 수 없습니다.)");
+  }
+}
+
+/** 폰이나 인증 앱을 잃었을 때. */
+async function totpOff(loginId: string) {
+  const row = await findIdentity(loginId);
+  if (!row) {
+    console.error(`"${loginId}" 라는 비상 계정이 없습니다.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  await db
+    .update(identities)
+    .set({ totpSecret: null, totpConfirmedAt: null, totpLastStep: null })
+    .where(eq(identities.id, row.identityId));
+
+  await db.insert(auditLogs).values({
+    actorUserId: row.userId,
+    actionType: "USER_UPDATED",
+    targetEntity: "identities",
+    targetRecordId: row.identityId,
+    newValue: { via: "EMERGENCY", action: "TOTP_DISABLED", loginId },
+  });
+
+  console.log(`"${loginId}" 의 2단계 인증을 껐습니다.`);
+  console.log("이제 비밀번호만으로 들어갑니다. 다시 켜려면 --totp 를 쓰세요.");
+}
+
 async function main() {
   const createId = arg("create");
   const resetId = arg("reset");
   const unlockId = arg("unlock");
+  const totpId = arg("totp");
+  const totpConfirmId = arg("totp-confirm");
+  const totpOffId = arg("totp-off");
 
   if (createId) return create(createId);
   if (resetId) return reset(resetId);
   if (unlockId) return unlock(unlockId);
+  if (totpId) return totpSetup(totpId);
+  if (totpConfirmId) return totpConfirm(totpConfirmId);
+  if (totpOffId) return totpOff(totpOffId);
 
   await list();
 }

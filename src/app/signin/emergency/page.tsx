@@ -23,6 +23,10 @@ export const metadata: Metadata = {
 const ERROR_MESSAGES: Record<string, string> = {
   invalid: "아이디 또는 비밀번호가 올바르지 않습니다.",
   not_active: "사용할 수 없는 계정입니다.",
+  // 이 둘은 비밀번호가 맞았다는 사실을 드러낸다. 여기 닿으려면 이미
+  // 비밀번호를 알아야 하므로, 모르는 사람에게 새는 정보가 아니다.
+  totp_required: "인증 앱의 6자리 코드를 함께 넣어 주세요.",
+  totp_invalid: "인증 코드가 올바르지 않습니다. 앱에 뜬 코드를 다시 확인해 주세요.",
 };
 
 export default async function EmergencySignInPage({
@@ -102,6 +106,33 @@ export default async function EmergencySignInPage({
             required
             autoComplete="current-password"
             className="h-11 rounded-lg border border-zinc-300 bg-white px-3 text-[15px] text-zinc-900 outline-none focus-visible:border-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:focus-visible:border-zinc-100"
+          />
+        </label>
+
+        {/*
+          2단계 인증을 켠 계정에서만 쓰이지만 칸은 언제나 보인다.
+
+          아이디를 치기 전에는 그 계정이 2단계 인증을 쓰는지 알 수 없고,
+          알아내려고 서버에 물으면 그 응답 자체가 "이 아이디는 존재한다"를
+          알려주는 조회 도구가 된다. 켜지 않은 계정에서는 여기 무엇을 넣든
+          무시된다.
+        */}
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            인증 코드{" "}
+            <span className="font-normal text-zinc-500">
+              (2단계 인증을 켠 경우)
+            </span>
+          </span>
+          <input
+            name="totpCode"
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9 -]*"
+            maxLength={9}
+            placeholder="000000"
+            className="h-11 rounded-lg border border-zinc-300 bg-white px-3 font-mono text-[15px] tracking-[0.2em] text-zinc-900 outline-none focus-visible:border-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:focus-visible:border-zinc-100"
           />
         </label>
 
