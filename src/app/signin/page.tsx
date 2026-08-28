@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import DssLogo from "@/components/DssLogo";
 import { sanitizeReturnTo } from "@/lib/session/login-tx";
 import { readSsoSession } from "@/lib/session/sso-session";
 
@@ -56,8 +57,9 @@ export default async function SignInPage({
 
   return (
     <main className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center px-6 py-12">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold tracking-tight">DSS</h1>
+      <div className="flex flex-col items-center text-center">
+        <DssLogo />
+        <h1 className="mt-4 text-2xl font-bold tracking-tight">DSS</h1>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
           사내 시스템 통합 로그인
         </p>
