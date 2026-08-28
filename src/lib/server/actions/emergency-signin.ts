@@ -3,8 +3,14 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { resolveEmergencyLogin } from "@/lib/auth/emergency-login";
+import { trustedProxyHops } from "@/lib/config/env";
 import { appendAuditLog } from "@/lib/db/mutations/audit";
 import { touchLastLogin } from "@/lib/db/mutations/users";
+import { trustedClientIp } from "@/lib/http/client-key";
+import {
+  emergencyLoginLimiter,
+  keyForForwardedFor,
+} from "@/lib/http/rate-limits";
 import { sanitizeReturnTo } from "@/lib/session/login-tx";
 import {
   createSsoSession,
@@ -59,11 +65,43 @@ export async function emergencySignIn(formData: FormData): Promise<void> {
   const returnTo = sanitizeReturnTo(String(formData.get("returnTo") ?? "") || null);
 
   const headerList = await headers();
-  const sourceIp = headerList.get("x-forwarded-for")?.split(",")[0]?.trim() || null;
+  const forwardedFor = headerList.get("x-forwarded-for");
+  // 첫 항목을 그대로 쓰지 않는다 — 클라이언트가 써 보낼 수 있는 값이라
+  // 감사 로그에 아무 주소나 남길 수 있었다. 근거는 lib/http/client-key.ts.
+  const sourceIp = trustedClientIp(forwardedFor, trustedProxyHops());
   const userAgent = headerList.get("user-agent");
 
   if (!loginId || !password) {
     redirect(`${EMERGENCY_PATH}?error=invalid`);
+  }
+
+  // ───── 속도 제한 ─────
+  //
+  // resolveEmergencyLogin **바로 앞**에 둔다. 그 안에서 scrypt가 도는데
+  // (실측 62ms, 32MB), 아이디가 없어도 응답 시간을 맞추려고 한 번은 반드시
+  // 돈다. 계정 잠금은 존재하는 계정만 지키므로 없는 아이디로 두드리는 경로는
+  // 이 한도가 유일한 방어다. 여기 두면 한도가 곧 "scrypt를 몇 번 돌려줄
+  // 것인가"가 되어, 빈 칸 제출 같은 무해한 요청은 예산을 깎지 않는다.
+  const limit = emergencyLoginLimiter.check(
+    keyForForwardedFor(forwardedFor),
+    Date.now()
+  );
+  if (!limit.allowed) {
+    // 거절할 때마다 기록하면 그 쓰기가 다시 공격 수단이 된다. 연속 거절의
+    // 첫 건에만 남겨 공격 한 번에 한 줄이 되게 한다.
+    //
+    // 새 actionType을 만들지 않고 LOGIN_FAILED에 사유를 담는다 — enum에
+    // 값을 더하려면 마이그레이션이 필요하고, 이 사건은 실제로 로그인 실패다.
+    // LOGIN_FAILED는 이미 감사 화면의 '주목' 목록에 있어 그대로 눈에 띈다.
+    if (limit.firstRejection) {
+      await appendAuditLog({
+        actionType: "LOGIN_FAILED",
+        newValue: { reason: "RATE_LIMITED", via: "EMERGENCY" },
+        sourceIp,
+        userAgent,
+      });
+    }
+    redirect(`${EMERGENCY_PATH}?error=too_many&seconds=${limit.retryAfterSeconds}`);
   }
 
   const result = await resolveEmergencyLogin(loginId, password, totpCode);

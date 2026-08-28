@@ -207,7 +207,7 @@ async function create(loginId: string) {
       userId: user.id,
       provider: "EMERGENCY",
       providerSubject: loginId,
-      passwordHash: hashPassword(password),
+      passwordHash: await hashPassword(password),
     });
 
     return user;
@@ -237,7 +237,7 @@ async function reset(loginId: string) {
   await db
     .update(identities)
     .set({
-      passwordHash: hashPassword(password),
+      passwordHash: await hashPassword(password),
       // 재발급은 잠금 해제를 겸한다. 비밀번호를 잊어 잠긴 경우가 대부분이라
       // 두 명령을 따로 치게 하면 그 순간에 한 번 더 막힌다.
       failedAttempts: 0,

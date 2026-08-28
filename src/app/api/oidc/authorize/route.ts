@@ -6,6 +6,10 @@ import {
   hasClientAccess,
   type ClientRecord,
 } from "@/lib/db/queries/oidc-clients";
+import {
+  authorizeEndpointLimiter,
+  keyForRequest,
+} from "@/lib/http/rate-limits";
 import { clientIp, redirectTo } from "@/lib/http/redirect";
 import { parseAuthorizeParams } from "@/lib/oidc/authorize-params";
 import { issueAuthorizationCode } from "@/lib/oidc/authorization-code";
@@ -48,6 +52,19 @@ function redirectWithError(
  */
 export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams;
+
+  // ───── [0] 속도 제한 ─────
+  //
+  // 검사 순서의 맨 앞이다. 아래 [A]부터는 요청마다 DB를 여러 번 읽는다.
+  //
+  // 거절을 redirect_uri로 실어 보내지 않고 우리 화면에서 끝내는 이유는
+  // 아래 [A]와 같다 — 이 시점에는 redirect_uri를 아직 검증하지 않았으므로
+  // 그리로 보내면 그 자체가 열린 리다이렉터가 된다. 검증보다 먼저 걸어야
+  // 하는 제한이라, 이 순서는 바꿀 수 없다.
+  const limit = authorizeEndpointLimiter.check(keyForRequest(request), Date.now());
+  if (!limit.allowed) {
+    return redirectTo("/oauth-error?code=too_many");
+  }
 
   // ───── [A] redirect_uri를 믿을 수 있는가 (리다이렉트 금지 구간) ─────
 

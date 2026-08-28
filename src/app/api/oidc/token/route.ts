@@ -7,6 +7,7 @@ import {
   type ClientRecord,
 } from "@/lib/db/queries/oidc-clients";
 import { getUserById } from "@/lib/db/queries/users";
+import { keyForRequest, tokenEndpointLimiter } from "@/lib/http/rate-limits";
 import { clientIp } from "@/lib/http/redirect";
 import {
   ACCESS_TOKEN_TTL_SECONDS,
@@ -37,6 +38,29 @@ function fail(error: OidcErrorCode, description: string, status = 400) {
         status === 401
           ? { ...NO_STORE, "www-authenticate": 'Basic realm="dss-auth"' }
           : NO_STORE,
+    }
+  );
+}
+
+/**
+ * 속도 제한에 걸렸을 때의 응답.
+ *
+ * temporarily_unavailable을 쓴다 — RFC 6749 §4.1.2.1이 "일시적 과부하"에
+ * 정의해 둔 코드라, 표준 라이브러리로 붙은 클라이언트가 "나중에 다시"로
+ * 해석한다. 우리가 문자열을 새로 만들면 그 분기가 동작하지 않는다.
+ *
+ * Retry-After는 초 단위 정수로 보낸다(RFC 9110 §10.2.3). 이게 있어야
+ * 클라이언트가 아무 때나 다시 오지 않고 알려준 만큼 기다린다.
+ */
+function tooManyRequests(retryAfterSeconds: number) {
+  return NextResponse.json(
+    {
+      error: "temporarily_unavailable" satisfies OidcErrorCode,
+      error_description: "요청이 너무 잦습니다. 잠시 후 다시 시도하세요.",
+    },
+    {
+      status: 429,
+      headers: { ...NO_STORE, "retry-after": String(retryAfterSeconds) },
     }
   );
 }
@@ -81,6 +105,17 @@ function readClientCredentials(
 }
 
 export async function POST(request: Request) {
+  // 본문을 읽기 전에 건다. 이 아래는 전부 DB를 만지고(클라이언트 조회,
+  // 코드 소비 트랜잭션, 토큰 발급) 본문 파싱조차 공짜가 아니다.
+  //
+  // 여기서는 감사 로그를 남기지 않는다 — 거절마다 쓰기를 하면 그 쓰기가
+  // 막으려던 부하를 대신 만든다. 비상 로그인 쪽은 사건 자체가 드물어
+  // 첫 거절 한 줄을 남기지만, 이 엔드포인트는 정상 트래픽이 훨씬 많다.
+  const limit = tokenEndpointLimiter.check(keyForRequest(request), Date.now());
+  if (!limit.allowed) {
+    return tooManyRequests(limit.retryAfterSeconds);
+  }
+
   let form: FormData;
   try {
     form = await request.formData();

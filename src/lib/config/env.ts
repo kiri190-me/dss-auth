@@ -99,3 +99,42 @@ export function allowHttpRedirectUris(): boolean {
 export function secureCookiesEnabled(): boolean {
   return getIssuer().startsWith("https://");
 }
+
+/**
+ * 우리 앞에 있는 **신뢰하는** 리버스 프록시의 수. 기본 0.
+ *
+ * x-forwarded-for에서 진짜 클라이언트 주소를 뒤에서 몇 번째로 읽을지 정한다.
+ * 자세한 근거는 lib/http/client-key.ts에 있다 — 요약하면, XFF의 앞자리는
+ * 언제나 클라이언트가 쓴 값이라 위조 가능하고 프록시가 덧붙인 뒷자리만
+ * 믿을 수 있다.
+ *
+ * **0으로 두면 IP별 구분을 포기하고 전체 공용 한도 하나로 막는다.** 지금은
+ * 프록시가 없으므로 0이 맞다. 6단계에서 DSM 리버스 프록시를 세우면 1로
+ * 바꾼다. 그때 바꾸는 것을 잊으면 제한이 필요 이상으로 빡빡하게 걸릴 뿐,
+ * 뚫리지는 않는다 — 틀렸을 때 안전한 쪽으로 기울여 둔 기본값이다.
+ *
+ * 반대로 실제 프록시 수보다 크게 적으면 위조된 앞자리를 믿게 되므로,
+ * 값이 정수가 아니거나 음수면 조용히 넘어가지 않고 멈춘다.
+ */
+let trustedProxyHopsCache: number | null = null;
+
+export function trustedProxyHops(): number {
+  if (trustedProxyHopsCache !== null) return trustedProxyHopsCache;
+
+  const raw = process.env.TRUSTED_PROXY_HOPS;
+  if (raw === undefined || raw === "") {
+    trustedProxyHopsCache = 0;
+    return 0;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(
+      `TRUSTED_PROXY_HOPS는 0 이상의 정수여야 합니다(받은 값: ${raw}). ` +
+        "프록시가 없으면 0, DSM 리버스 프록시 뒤라면 1입니다."
+    );
+  }
+
+  trustedProxyHopsCache = parsed;
+  return parsed;
+}

@@ -29,11 +29,15 @@ export type EmergencyLoginResult =
  *
  * 첫 호출 때 한 번만 만든다 — 모듈 최상단에서 만들면 이 파일을 import하는
  * 모든 요청 경로가 서버 시작 시 scrypt 한 번을 떠안는다.
+ *
+ * 해시가 아니라 **Promise를 담아 둔다.** 동시에 두 요청이 들어와도 계산은
+ * 한 번만 돌고 둘 다 같은 결과를 기다린다 — 해시를 담으면 첫 계산이 끝나기
+ * 전에 온 요청이 각자 새로 계산해, 없는 아이디로 두드릴수록 비용이 늘어난다.
  */
-let dummyHash: string | null = null;
-function getDummyHash(): string {
-  dummyHash ??= hashPassword(randomBytes(32).toString("base64"));
-  return dummyHash;
+let dummyHashPromise: Promise<string> | null = null;
+function getDummyHash(): Promise<string> {
+  dummyHashPromise ??= hashPassword(randomBytes(32).toString("base64"));
+  return dummyHashPromise;
 }
 
 /**
@@ -80,7 +84,7 @@ export async function resolveEmergencyLogin(
 
   // 아이디가 없거나 비밀번호가 설정되지 않은 신원도 여기서 함께 처리한다.
   if (!row || !row.passwordHash) {
-    verifyPassword(password, getDummyHash());
+    await verifyPassword(password, await getDummyHash());
     return { outcome: "REJECTED", code: "INVALID" };
   }
 
@@ -100,7 +104,7 @@ export async function resolveEmergencyLogin(
     };
   }
 
-  if (!verifyPassword(password, row.passwordHash)) {
+  if (!(await verifyPassword(password, row.passwordHash))) {
     const next = afterFailure(state, now);
     await db
       .update(identities)

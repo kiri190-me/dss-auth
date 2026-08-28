@@ -35,10 +35,11 @@ export default async function EmergencySignInPage({
   searchParams: Promise<{
     error?: string;
     minutes?: string;
+    seconds?: string;
     returnTo?: string;
   }>;
 }) {
-  const { error, minutes, returnTo } = await searchParams;
+  const { error, minutes, seconds, returnTo } = await searchParams;
 
   const safeReturnTo = sanitizeReturnTo(returnTo ?? null);
 
@@ -47,12 +48,18 @@ export default async function EmergencySignInPage({
     redirect(session.status === "ACTIVE" ? (safeReturnTo ?? "/apps") : "/pending");
   }
 
+  // 잠금(locked)과 혼잡(too_many)은 다른 사건이다. 앞은 이 계정이 5번
+  // 틀린 것이고, 뒤는 서버가 지금 비상 로그인 시도를 너무 많이 받고 있다는
+  // 뜻이다 — 내 계정은 아직 멀쩡하고 기다리는 시간도 훨씬 짧다. 두 문구를
+  // 같게 만들면 관리자가 "내가 잠갔구나" 하고 15분을 헛되이 기다린다.
   const message =
     error === "locked"
       ? `너무 여러 번 실패했습니다. ${minutes ?? "15"}분 뒤에 다시 시도해 주세요.`
-      : error
-        ? (ERROR_MESSAGES[error] ?? ERROR_MESSAGES.invalid)
-        : null;
+      : error === "too_many"
+        ? `로그인 시도가 몰리고 있습니다. ${seconds ?? "60"}초 뒤에 다시 시도해 주세요.`
+        : error
+          ? (ERROR_MESSAGES[error] ?? ERROR_MESSAGES.invalid)
+          : null;
 
   return (
     <main className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center px-6 py-12">
