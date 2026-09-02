@@ -1,0 +1,16 @@
+# 컨테이너 안에서 도는 파일은 반드시 LF 로 둔다.
+#
+# 이 저장소는 core.autocrlf=true 라, 이 규칙이 없으면 새로 클론할 때
+# Dockerfile 이 CRLF 로 내려온다. 그러면 여러 줄짜리 RUN 의 줄바꿈에 \r 이
+# 붙어 컨테이너 셸이 이렇게 죽는다:
+#
+#   /bin/sh: 1: $'\r': command not found
+#
+# 개발 PC 에서 방금 만든 파일은 LF 라 잘 되고, 다른 사람이 클론하면 안 되는
+# 종류의 문제다. 원인을 줄 끝 문자에서 찾기까지 한참 걸린다.
+#
+# 저장소 전체에 eol=lf 를 걸지 않는 이유: 이미 커밋된 파일 전부가 한꺼번에
+# 바뀐 것으로 잡혀 diff 가 무의미해진다. 필요한 것만 지정한다.
+Dockerfile      text eol=lf
+.dockerignore   text eol=lf
+*.sh            text eol=lf
