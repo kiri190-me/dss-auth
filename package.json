@@ -12,7 +12,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:purge": "node --env-file=.env.local --import tsx scripts/purge-expired.ts",
-    "backup": "node --env-file=.env.local --import tsx scripts/backup.ts",
+    "backup": "node --import tsx scripts/backup.ts",
     "key:generate": "node --env-file=.env.local --import tsx scripts/generate-signing-key.ts",
     "icons": "tsx scripts/generate-icons.ts",
     "client:grant": "node --env-file=.env.local --import tsx scripts/grant-client-access.ts",
