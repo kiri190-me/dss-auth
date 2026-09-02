@@ -12,6 +12,21 @@
 # 127.0.0.1에만 바인딩한다 — 개발 PC 밖에서는 DB에 직접 접속할 수 없다.
 services:
   db-dev:
+    # ⚠️ 이 태그를 17로 바꾸고 재시작하지 마세요.
+    #
+    # PostgreSQL은 데이터 폴더 형식이 메이저 버전마다 다릅니다. 16이 만든
+    # 볼륨에 17을 붙이면 컨테이너가 아예 뜨지 않습니다:
+    #
+    #   FATAL: database files are incompatible with server
+    #   DETAIL: The data directory was initialized by PostgreSQL version 16,
+    #           which is not compatible with this version 17.x
+    #
+    # 데이터가 망가지지는 않습니다 — 옛 태그로 되돌리면 다시 뜹니다. 진짜
+    # 위험은 그 다음입니다. "왜 안 뜨지" 하고 볼륨을 지우면 데이터가 사라집니다.
+    #
+    # 17로 가는 길은 덤프 → 새 볼륨 → 복원뿐입니다. 절차는
+    # ../dss-deploy/runbook/01-postgres-통합.md 9절에 있고,
+    # NAS 이식의 2단계에서 한 번에 처리합니다.
     image: postgres:16.14-alpine3.24
     container_name: dss-auth-postgres-dev
     restart: unless-stopped
