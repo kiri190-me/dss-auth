@@ -157,8 +157,15 @@ function ClientAccessBlock({
         ))}
       </div>
       <p className="mt-2 text-xs text-zinc-500">
-        여기서 고른 역할이 그 시스템의 권한이 됩니다. 이미 로그인해 있는
-        사람에게는 다음 로그인부터 반영됩니다.
+        여기서 고른 역할이 그 시스템의 권한이 됩니다. 그 시스템에 계정이 없으면
+        <strong className="font-medium"> 첫 로그인에 자동으로 만들어집니다.</strong>{" "}
+        이미 로그인해 있는 사람에게는 다음 로그인부터 반영됩니다.
+      </p>
+      <p className="mt-1 text-xs text-zinc-500">
+        예외가 하나 있습니다 — 그 시스템에 <strong className="font-medium">같은
+        이메일을 쓰는 계정이 이미 있으면</strong> 자동으로 잇지 않고 로그인을
+        거절합니다. 남의 계정을 넘겨받는 일이 없도록 일부러 그렇게 두었고, 그
+        경우에는 그 시스템에서 사람이 직접 이어야 합니다.
       </p>
     </details>
   );
