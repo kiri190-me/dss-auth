@@ -4,6 +4,7 @@ import { db } from "@/lib/db/client";
 import { appendAuditLog } from "@/lib/db/mutations/audit";
 import { clients, userClientGrants } from "@/lib/db/schema";
 import { signLogoutToken } from "./logout-token";
+import { expandLanPlaceholderToPrimary } from "@/lib/config/lan-address";
 
 /**
  * 세션이 끊겼다는 사실을 각 시스템에 알린다.
@@ -59,7 +60,11 @@ async function findTargets(userId: string): Promise<Target[]> {
       )
     );
 
-  return rows.filter((row): row is Target => row.uri !== null);
+  return rows
+    .filter((row): row is Target => row.uri !== null)
+    // 통보 주소에도 {lan}을 쓸 수 있다. 여기서 펼치지 않으면 주소가 바뀐 뒤
+    // 로그아웃 통보만 조용히 실패한다 — 로그인은 되는데 나가지지 않는 상태다.
+    .map((target) => ({ ...target, uri: expandLanPlaceholderToPrimary(target.uri) }));
 }
 
 async function notifyOne(target: Target, token: string): Promise<boolean> {

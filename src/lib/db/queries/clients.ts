@@ -2,6 +2,7 @@ import "server-only";
 import { and, asc, eq, isNotNull, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { clients, userClientGrants } from "@/lib/db/schema";
+import { expandLanPlaceholderToPrimary } from "@/lib/config/lan-address";
 
 export type ClientTile = {
   clientId: string;
@@ -19,7 +20,7 @@ export type ClientTile = {
  * 없어야 한다. 그래서 authorize 엔드포인트도 같은 조건을 쓴다.
  */
 export async function listAccessibleClients(userId: string): Promise<ClientTile[]> {
-  return db
+  const rows = await db
     .select({
       clientId: clients.clientId,
       name: clients.name,
@@ -43,4 +44,14 @@ export async function listAccessibleClients(userId: string): Promise<ClientTile[
       )
     )
     .orderBy(asc(clients.sortOrder), asc(clients.name));
+
+  // 런처 주소도 {lan}을 쓸 수 있다. 타일을 누르는 사람이 폰이든 PC든
+  // 지금 이 기계의 주소로 간다 — 주소가 바뀌어도 링크가 따라온다.
+  return rows.map((row) => ({
+    ...row,
+    launcherUrl:
+      row.launcherUrl === null
+        ? null
+        : expandLanPlaceholderToPrimary(row.launcherUrl),
+  }));
 }

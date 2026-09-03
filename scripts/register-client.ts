@@ -11,13 +11,13 @@
  *
  *   npm run client:register -- --client-id rf-service-system \
  *       --name "DSS A/S 관리 시스템" \
- *       --redirect-uri http://192.168.1.132:3000/api/auth/sso/callback \
- *       --post-logout-redirect-uri http://192.168.1.132:3000/login \
- *       --launcher-url http://192.168.1.132:3000/dashboard \
+ *       --redirect-uri 'http://{lan}:3000/api/auth/sso/callback' \
+ *       --post-logout-redirect-uri 'http://{lan}:3000/login' \
+ *       --launcher-url 'http://{lan}:3000/dashboard' \
  *       --launcher-icon 🔧
  *
  *   npm run client:register -- --client-id rf-service-system \
- *       --backchannel-logout-uri http://192.168.1.132:3000/api/auth/sso/backchannel-logout
+ *       --backchannel-logout-uri 'http://{lan}:3000/api/auth/sso/backchannel-logout'
  *     → 세션이 끊겼을 때 알려 줄 주소를 등록한다. 없으면 알리지 않는다.
  *
  *   npm run client:register -- --client-id rf-service-system --rotate
@@ -30,6 +30,21 @@
  *
  * --redirect-uri와 --role은 여러 번 줄 수 있다. 둘 다 주지 않으면 기존
  * 목록을 그대로 둔다(지우지 않는다).
+ *
+ * ───────────────────────────────────────────────────────────────
+ * 호스트 자리의 {lan}
+ *
+ * 주소 자리에 {lan}을 적으면, 포털이 검증하기 직전에 **자기 기계의 실제
+ * 사내망 주소**로 펼쳐 평소와 똑같이 정확 일치로 대조한다. 와일드카드가
+ * 아니다 — 펼친 값은 언제나 이 서버 자신의 주소이고, 요청하는 쪽이 그
+ * 목록을 바꿀 수 없다(자세한 근거는 lib/oidc/redirect-uri.ts).
+ *
+ * 이걸 쓰면 Wi-Fi를 옮겨도 등록을 다시 하지 않아도 된다. 주소를 직접 적으면
+ * 그날부터 그 주소에 묶인다. 셸이 중괄호를 건드리지 않도록 작은따옴표로
+ * 감싼다.
+ *
+ * 지금 무엇으로 펼쳐지는지는 `npm run net:doctor`가 보여준다.
+ * ───────────────────────────────────────────────────────────────
  */
 import { randomBytes, createHash } from "node:crypto";
 import { eq } from "drizzle-orm";

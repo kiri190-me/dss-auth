@@ -14,6 +14,7 @@ import { clientIp, redirectTo } from "@/lib/http/redirect";
 import { parseAuthorizeParams } from "@/lib/oidc/authorize-params";
 import { issueAuthorizationCode } from "@/lib/oidc/authorization-code";
 import type { OidcFailure } from "@/lib/oidc/errors";
+import { detectLanAddresses } from "@/lib/config/lan-address";
 import { isRegisteredRedirectUri } from "@/lib/oidc/redirect-uri";
 import { readSsoSession } from "@/lib/session/sso-session";
 
@@ -80,7 +81,8 @@ export async function GET(request: NextRequest) {
     !isRegisteredRedirectUri(
       redirectUri,
       client.redirectUris,
-      allowHttpRedirectUris()
+      allowHttpRedirectUris(),
+      detectLanAddresses()
     )
   ) {
     return redirectTo("/oauth-error?code=bad_redirect_uri");

@@ -17,6 +17,10 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { eq } from "drizzle-orm";
 import { db, pgClient } from "../src/lib/db/connection";
 import {
+  primaryLanAddress,
+  resolveAutoUrl,
+} from "../src/lib/config/lan-address";
+import {
   accessTokens,
   authorizationCodes,
   clients,
@@ -25,11 +29,21 @@ import {
   users,
 } from "../src/lib/db/schema";
 
-const ISSUER = (process.env.OIDC_ISSUER ?? "http://localhost:3100").replace(/\/+$/, "");
+/**
+ * OIDC_ISSUER 가 auto 면 여기서도 풀어야 한다. 풀지 않으면 "auto" 라는
+ * 문자열이 그대로 기준 URL 이 되어 전 항목이 연결 실패로 떨어진다.
+ */
+const ISSUER = resolveAutoUrl(
+  process.env.OIDC_ISSUER ?? "http://localhost:3100",
+  3100,
+  primaryLanAddress()
+).replace(/\/+$/, "");
 const TEST_CLIENT_ID = "__e2e-check";
 /** 실제 시스템의 역할과 겹치지 않는 값을 쓴다 — 섞이면 진단이 어려워진다. */
 const TEST_ROLE = "__E2E_ROLE";
 const REDIRECT_URI = "http://localhost:9999/cb";
+/** 호스트 자리에 자리표시자를 둔 등록 주소. 비교 직전에 이 기계 주소로 펼쳐진다. */
+const LAN_REDIRECT_URI = "http://{lan}:9999/lan-cb";
 
 const sha256 = (value: string) =>
   createHash("sha256").update(value, "utf8").digest("hex");
@@ -87,7 +101,7 @@ async function main() {
       clientId: TEST_CLIENT_ID,
       name: "E2E 점검용 (자동 생성)",
       clientSecretHash: sha256(clientSecret),
-      redirectUris: [REDIRECT_URI],
+      redirectUris: [REDIRECT_URI, LAN_REDIRECT_URI],
       // 권한 부여 절차 없이 바로 통과시킨다 — 여기서 보려는 것은
       // 프로토콜이지 권한 모델이 아니다.
       requiresGrant: false,
@@ -335,6 +349,57 @@ async function main() {
       "미로그인 + prompt=none은 login_required로 되돌려보낸다",
       promptNoneTarget.includes("error=login_required"),
       promptNoneTarget
+    );
+
+    // ─────────── {lan} 자리표시자 ───────────
+    //
+    // 여기서 보려는 것은 "편해졌다"가 아니라 **느슨해지지 않았다**이다.
+    console.log("\n{lan} 자리표시자");
+
+    const lanAddress = primaryLanAddress();
+    const lanExpanded = `http://${lanAddress}:9999/lan-cb`;
+
+    async function authorizeWith(redirectUri: string) {
+      const response = await get(
+        `/api/oidc/authorize?${new URLSearchParams({
+          client_id: TEST_CLIENT_ID,
+          redirect_uri: redirectUri,
+          response_type: "code",
+          scope: "openid",
+          state: "s".repeat(43),
+          nonce: "n".repeat(43),
+          code_challenge: "x".repeat(43),
+          code_challenge_method: "S256",
+        })}`,
+        cookie
+      );
+      return response.headers.get("location") ?? "";
+    }
+
+    const lanOk = await authorizeWith(lanExpanded);
+    check(
+      `{lan}이 이 기계의 주소(${lanAddress})로 펼쳐져 통과한다`,
+      lanOk.startsWith(lanExpanded),
+      lanOk
+    );
+
+    // 같은 망의 이웃 주소. 접두사 일치나 와일드카드였다면 통과했을 값이다.
+    const octets = lanAddress.split(".");
+    octets[3] = octets[3] === "254" ? "253" : "254";
+    const neighbour = octets.join(".");
+    const lanBad = await authorizeWith(`http://${neighbour}:9999/lan-cb`);
+    check(
+      `같은 망의 다른 주소(${neighbour})는 거절 — 와일드카드가 아니다`,
+      !lanBad.includes(neighbour) && lanBad.startsWith("/oauth-error"),
+      lanBad
+    );
+
+    // 자리표시자 자체를 요청해도 통과하면 안 된다 — 요청값은 펼치지 않는다.
+    const lanLiteral = await authorizeWith(LAN_REDIRECT_URI);
+    check(
+      "자리표시자를 그대로 요청하면 거절",
+      lanLiteral.startsWith("/oauth-error"),
+      lanLiteral
     );
   } finally {
     // ── 정리 ──

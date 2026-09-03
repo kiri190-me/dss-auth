@@ -1,3 +1,9 @@
+# DSS 통합 로그인 (dss-auth)
+
+- **주소가 바뀌어 로그인이 막혔다면** → [docs/주소.md](docs/주소.md) 및 `npm run net:doctor`
+
+---
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started

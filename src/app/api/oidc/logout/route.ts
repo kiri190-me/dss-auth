@@ -5,6 +5,7 @@ import { appendAuditLog } from "@/lib/db/mutations/audit";
 import { notifyBackchannelLogout } from "@/lib/oidc/backchannel-logout";
 import { getActiveClient } from "@/lib/db/queries/oidc-clients";
 import { clientIp, redirectTo } from "@/lib/http/redirect";
+import { detectLanAddresses } from "@/lib/config/lan-address";
 import { isRegisteredRedirectUri } from "@/lib/oidc/redirect-uri";
 import {
   readSsoSession,
@@ -46,7 +47,8 @@ async function resolvePostLogoutRedirect(
   return isRegisteredRedirectUri(
     requested,
     client.postLogoutRedirectUris,
-    allowHttpRedirectUris()
+    allowHttpRedirectUris(),
+    detectLanAddresses()
   )
     ? requested
     : null;
