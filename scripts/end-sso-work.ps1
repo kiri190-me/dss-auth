@@ -58,7 +58,10 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 
 $RepoRoot  = Split-Path -Parent $PSScriptRoot
-$Container = 'dss-auth-postgres-dev'
+# 2026-09-03 NAS 이식 2단계 리허설 뒤로 포털 DB는 인증 전용 인스턴스 dss-pg-auth의
+# dss_auth에 있다. 이 인스턴스는 포털만 쓰므로 여기서 그냥 끈다. 옛
+# dss-auth-postgres-dev는 정지된 채 2026-09-17까지 되돌리기용으로만 남는다.
+$Container = 'dss-pg-auth'
 $DevPort   = 3100
 
 # 네이티브 명령은 cmd를 거쳐 부른다. Windows PowerShell 5.1은 exe의 stderr를
