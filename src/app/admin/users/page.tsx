@@ -99,11 +99,17 @@ function ClientAccessRow({
       <form action={setClientAccess}>
         <input type="hidden" name="userId" value={user.id} />
         <input type="hidden" name="clientId" value={client.id} />
+        {/*
+          배경을 투명으로 두지 않는다. 펼쳐지는 옵션 목록은 브라우저가 따로
+          그리는데, 칸이 투명이면 목록을 흰 바탕으로 채우고 글자는 본문의
+          흰색을 물려받아 다크 모드에서 흰 바탕에 흰 글자가 된다. 옵션에도
+          같은 색을 박아 두어 목록 바탕을 브라우저 추측에 맡기지 않는다.
+        */}
         <select
           name="value"
           defaultValue={current}
           aria-label={`${user.displayName} · ${client.name} 접근`}
-          className="rounded-md border border-zinc-300 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700"
+          className="rounded-md border border-zinc-300 bg-background px-2 py-1.5 text-sm outline-none focus:border-zinc-500 *:bg-background dark:border-zinc-700"
         >
           <option value={NO_ACCESS}>권한 없음</option>
           {usesRoles ? (
