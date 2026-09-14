@@ -78,6 +78,145 @@ test("쓸 주소가 없으면 빈 목록", () => {
   assert.deepEqual(collectLanAddresses({}), []);
 });
 
+// ───── Windows 모바일 핫스팟 ─────
+//
+// 2026-09-13 이 PC에서 포털 issuer가 http://192.168.137.1:3100으로 떴다.
+// 실제 Wi-Fi는 192.168.35.215였다. 핫스팟 어댑터 이름("로컬 영역 연결* 12")이
+// 가상 어댑터 규칙에 걸리지 않고, 두 주소가 모두 192.168이라 대역 순위도
+// 같아서, 마지막 사전순에서 "137"이 "35"보다 앞섰다.
+// 이 PC 안의 왕복은 되므로 check:oidc가 못 잡는다. 폰·동료 PC에서만 막힌다.
+
+/** 스냅샷 한 칸을 짧게 쓰려고. */
+function v4(address: string) {
+  return [{ address, family: "IPv4", internal: false }];
+}
+
+/** 2026-09-13 이 PC에서 관측한 모양. 핫스팟이 켜져 있었다. */
+const PC_2026_09_13: InterfaceSnapshot = {
+  "Wi-Fi 2": v4("192.168.35.215"),
+  "로컬 영역 연결* 12": v4("192.168.137.1"),
+  "로컬 영역 연결* 11": v4("169.254.142.11"),
+  "vEthernet (WSL (Hyper-V firewall))": v4("172.23.224.1"),
+  "Bluetooth 네트워크 연결": v4("169.254.114.146"),
+  "Loopback Pseudo-Interface 1": [
+    { address: "127.0.0.1", family: "IPv4", internal: true },
+  ],
+};
+
+test("2026-09-13 구성 — Wi-Fi가 핫스팟보다 먼저 온다", () => {
+  assert.deepEqual(collectLanAddresses(PC_2026_09_13), [
+    "192.168.35.215",
+    "192.168.137.1",
+    "172.23.224.1",
+  ]);
+});
+
+test("핫스팟 주소는 버리지 않고 뒤에 남긴다 — 핫스팟을 쓸 때가 있다", () => {
+  const addresses = collectLanAddresses(PC_2026_09_13);
+  assert.equal(addresses.includes("192.168.137.1"), true);
+  assert.ok(addresses.indexOf("192.168.137.1") > addresses.indexOf("192.168.35.215"));
+  // 등록 주소를 펼친 후보에도 남는다. 핫스팟에 붙은 폰의 redirect_uri가 통과한다.
+  assert.equal(
+    expandLanPlaceholder("http://{lan}:3000/cb", addresses).includes(
+      "http://192.168.137.1:3000/cb"
+    ),
+    true
+  );
+});
+
+test("2026-09-14 구성(Wi-Fi 192.168.1.132)도 같은 순서다", () => {
+  // 이날은 사전순이 우연히 맞아("1." < "13") 증상이 보이지 않았다.
+  const snapshot: InterfaceSnapshot = { ...PC_2026_09_13, "Wi-Fi 2": v4("192.168.1.132") };
+  assert.deepEqual(collectLanAddresses(snapshot), [
+    "192.168.1.132",
+    "192.168.137.1",
+    "172.23.224.1",
+  ]);
+});
+
+test("192.168.2.x Wi-Fi도 핫스팟보다 먼저 온다", () => {
+  const snapshot: InterfaceSnapshot = {
+    "Wi-Fi": v4("192.168.2.40"),
+    "로컬 영역 연결* 12": v4("192.168.137.1"),
+  };
+  assert.deepEqual(collectLanAddresses(snapshot), ["192.168.2.40", "192.168.137.1"]);
+});
+
+test("영문 Windows의 핫스팟 어댑터 이름도 알아본다", () => {
+  const snapshot: InterfaceSnapshot = {
+    "Wi-Fi": v4("192.168.35.215"),
+    "Local Area Connection* 3": v4("192.168.137.1"),
+  };
+  assert.deepEqual(collectLanAddresses(snapshot), ["192.168.35.215", "192.168.137.1"]);
+});
+
+test("핫스팟 대역을 바꾼 PC도 어댑터 이름으로 알아본다", () => {
+  // 인터넷 연결 공유의 대역은 레지스트리로 바꿀 수 있다. 주소 표지가 빗나간다.
+  for (const name of ["로컬 영역 연결* 12", "Local Area Connection* 12"]) {
+    const snapshot: InterfaceSnapshot = {
+      "Wi-Fi": v4("192.168.35.215"),
+      [name]: v4("192.168.10.1"),
+    };
+    assert.deepEqual(collectLanAddresses(snapshot), ["192.168.35.215", "192.168.10.1"], name);
+  }
+});
+
+test("이름을 몰라도 192.168.137 대역이면 핫스팟으로 본다", () => {
+  // 인터넷 연결 공유로 이더넷 포트를 내주면 그 포트가 192.168.137.1을 받는다.
+  const snapshot: InterfaceSnapshot = {
+    "Wi-Fi": v4("192.168.35.215"),
+    "이더넷 2": v4("192.168.137.1"),
+  };
+  assert.deepEqual(collectLanAddresses(snapshot), ["192.168.35.215", "192.168.137.1"]);
+});
+
+test("별표 없는 'Local Area Connection 2'는 진짜 랜카드다 — 밀지 않는다", () => {
+  // 옛 Windows는 유선 랜카드를 이렇게 불렀다. 핫스팟은 이름에 별표가 붙는다.
+  const snapshot: InterfaceSnapshot = {
+    "Local Area Connection 2": v4("192.168.35.215"),
+    "Local Area Connection* 12": v4("192.168.10.1"),
+  };
+  assert.deepEqual(collectLanAddresses(snapshot), ["192.168.35.215", "192.168.10.1"]);
+});
+
+test("아이폰 핫스팟에 붙은 Wi-Fi(172.20.10.x)가 이 PC 자신의 핫스팟보다 먼저 온다", () => {
+  // 대역 순위만 보면 192.168이 172보다 앞선다. 층이 대역보다 먼저여야 한다.
+  const snapshot: InterfaceSnapshot = {
+    "Wi-Fi 2": v4("172.20.10.4"),
+    "로컬 영역 연결* 12": v4("192.168.137.1"),
+    "vEthernet (WSL (Hyper-V firewall))": v4("172.23.224.1"),
+  };
+  assert.deepEqual(collectLanAddresses(snapshot), [
+    "172.20.10.4",
+    "192.168.137.1",
+    "172.23.224.1",
+  ]);
+});
+
+test("진짜 어댑터가 없으면 핫스팟이 가상 어댑터보다 먼저다", () => {
+  // 핫스팟은 폰이 실제로 붙는 망이고, 가상 어댑터는 이 PC 밖에서 닿지 않는다.
+  // 둘을 한 층에 두었다면 사전순으로 VMware(192.168.100.1)가 앞섰다.
+  const snapshot: InterfaceSnapshot = {
+    "VMware Network Adapter VMnet8": v4("192.168.100.1"),
+    "로컬 영역 연결* 12": v4("192.168.137.1"),
+    "vEthernet (WSL (Hyper-V firewall))": v4("172.23.224.1"),
+  };
+  assert.deepEqual(collectLanAddresses(snapshot), [
+    "192.168.137.1",
+    "192.168.100.1",
+    "172.23.224.1",
+  ]);
+});
+
+test("남의 Windows 핫스팟에 붙어 192.168.137.x를 받은 Wi-Fi도 혼자면 첫째다", () => {
+  // 주소 표지는 뒤로 밀 뿐이라, 다른 진짜 어댑터가 없으면 여전히 첫째다.
+  const snapshot: InterfaceSnapshot = {
+    "Wi-Fi 2": v4("192.168.137.23"),
+    "vEthernet (WSL (Hyper-V firewall))": v4("172.23.224.1"),
+  };
+  assert.deepEqual(collectLanAddresses(snapshot), ["192.168.137.23", "172.23.224.1"]);
+});
+
 // ───── 자리표시자 ─────
 
 test("호스트 자리에 있을 때만 자리표시자로 본다", () => {

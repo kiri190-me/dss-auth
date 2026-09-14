@@ -42,13 +42,54 @@ export type InterfaceSnapshot = Record<
  */
 const VIRTUAL_ADAPTER = /(vethernet|hyper-?v|wsl|virtualbox|vmware|docker|bluetooth|블루투스|loopback)/i;
 
+/**
+ * Windows 모바일 핫스팟. 2026-09-13 이 PC에서 포털 issuer가 핫스팟 주소
+ * (192.168.137.1)로 떴다. 실제 Wi-Fi는 192.168.35.215였다. 어댑터 이름이
+ * 위 규칙에 걸리지 않고, 둘 다 192.168이라 대역 순위도 같아서, 마지막
+ * 사전순에서 "137"이 "35"보다 앞섰다. 이 PC 안의 왕복은 되니 check:oidc가
+ * 못 잡고, 폰이나 동료 PC에서만 로그인이 막힌다.
+ *
+ * 표지 둘 중 하나만 맞아도 핫스팟으로 본다.
+ * - 주소: Windows가 핫스팟(인터넷 연결 공유)에 기본으로 쓰는 대역이
+ *   192.168.137.0/24이고 PC 자신이 .1을 갖는다.
+ * - 이름: 핫스팟 어댑터는 "로컬 영역 연결* 12"(영문 "Local Area Connection* 12")
+ *   처럼 별표 뒤에 번호가 붙는다. 대역을 레지스트리로 바꾼 PC도 이걸로 잡힌다.
+ *   별표가 있어야 한다 — 옛 Windows는 진짜 유선 랜카드를 "Local Area
+ *   Connection 2"라고 불렀다.
+ *
+ * 걸려도 가상 어댑터처럼 뒤로 밀 뿐 버리지 않는다. 사용자는 핫스팟을 켜고
+ * 폰을 붙여 쓸 때가 있고, 그때 {lan}을 펼친 후보에 이 주소가 있어야 한다.
+ */
+const HOTSPOT_SUBNET = "192.168.137.";
+const HOTSPOT_ADAPTER = /(연결|connection)\*\s*\d+$/i;
+
+/**
+ * 어댑터 층. 낮을수록 먼저이고, 대역 순위보다 앞서 본다 — 아이폰 핫스팟에
+ * 붙은 Wi-Fi(172.20.10.x)가 이 PC 자신의 핫스팟(192.168.137.1)에 밀리면
+ * 안 된다.
+ *
+ *   0 진짜 어댑터 → 1 핫스팟 → 2 가상 어댑터
+ *
+ * 핫스팟을 가상 어댑터와 한 층에 두지 않고 사이에 층을 따로 둔 이유:
+ * 핫스팟은 폰이 실제로 붙는 망이지만, 가상 어댑터(VMware·VirtualBox가 잡는
+ * 192.168.x.1 같은 것)는 이 PC 밖에서 아무도 닿지 않는다. 한 층에 두면
+ * 둘 다 192.168일 때 사전순이 승부를 내서, 진짜 어댑터가 없을 때 대표
+ * 주소가 아무도 못 닿는 쪽으로 갈 수 있다. 가상 어댑터 이름이 먼저 걸리면
+ * 그쪽으로 본다 — 더 뒤로 미는 쪽이 안전하다.
+ */
+function adapterTier(name: string, address: string): number {
+  if (VIRTUAL_ADAPTER.test(name)) return 2;
+  if (address.startsWith(HOTSPOT_SUBNET) || HOTSPOT_ADAPTER.test(name)) return 1;
+  return 0;
+}
+
 /** 169.254/16. 주소를 못 받았을 때 OS가 스스로 붙이는 값이라 쓸모가 없다. */
 function isLinkLocal(address: string): boolean {
   return address.startsWith("169.254.");
 }
 
 /**
- * 사설 대역 선호 순위. 낮을수록 먼저다.
+ * 사설 대역 선호 순위. 낮을수록 먼저다. 같은 층 안에서만 본다.
  *
  * 이름 규칙이 빗나가도 이 순위가 한 번 더 걸러준다 — 가정·사무실 공유기는
  * 거의 192.168이고, WSL·Docker가 잡는 172.16~31과 겹치지 않는다.
@@ -65,7 +106,7 @@ function subnetRank(address: string): number {
  * 만들어 넣을 수 있어야 한다.
  */
 export function collectLanAddresses(snapshot: InterfaceSnapshot): string[] {
-  const found: { address: string; virtual: boolean }[] = [];
+  const found: { address: string; tier: number }[] = [];
 
   for (const [name, entries] of Object.entries(snapshot)) {
     for (const entry of entries ?? []) {
@@ -73,13 +114,13 @@ export function collectLanAddresses(snapshot: InterfaceSnapshot): string[] {
       if (entry.family !== "IPv4" && entry.family !== 4) continue;
       if (entry.internal) continue; // 127.0.0.1
       if (isLinkLocal(entry.address)) continue;
-      found.push({ address: entry.address, virtual: VIRTUAL_ADAPTER.test(name) });
+      found.push({ address: entry.address, tier: adapterTier(name, entry.address) });
     }
   }
 
   return found
     .sort((a, b) => {
-      if (a.virtual !== b.virtual) return a.virtual ? 1 : -1;
+      if (a.tier !== b.tier) return a.tier - b.tier;
       const rank = subnetRank(a.address) - subnetRank(b.address);
       if (rank !== 0) return rank;
       // 순서가 실행마다 흔들리면 issuer가 흔들린다. 마지막엔 사전순으로 못 박는다.
