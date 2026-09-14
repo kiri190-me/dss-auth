@@ -64,9 +64,16 @@ try {
 /** "docker"(기본) 또는 "direct". 머리말에 각각의 쓰임과 금기가 있다. */
 const MODE = (process.env.BACKUP_MODE ?? "docker").trim().toLowerCase();
 
-const CONTAINER = process.env.BACKUP_DB_CONTAINER ?? "dss-auth-postgres-dev";
+// docker 모드가 pg_dump를 시킬 곳. 기본값은 포털 DB가 사는 인증 전용 인스턴스다
+// (NAS 이식 2단계 리허설, 2026-09-03부터). 앱 롤은 컨테이너 안 소켓으로 비밀번호
+// 없이 붙는다(pg_hba의 local trust).
+//
+// 옛 기본값 dss-auth-postgres-dev / dss_auth_dev는 은퇴한 상자다. 덮어쓰기 없이
+// 돌면 멈춘 컨테이너라 실패했고, 되돌리기 연습으로 그 상자를 켜 둔 날에는 옛
+// 자료를 조용히 떴다. 이 PC의 .env.local이 BACKUP_DB_*로 덮어써서 가려져 있었다.
+const CONTAINER = process.env.BACKUP_DB_CONTAINER ?? "dss-pg-auth";
 const DB_USER = process.env.BACKUP_DB_USER ?? "dss_auth_app";
-const DB_NAME = process.env.BACKUP_DB_NAME ?? "dss_auth_dev";
+const DB_NAME = process.env.BACKUP_DB_NAME ?? "dss_auth";
 const KEYS_DIR = process.env.AUTH_KEYS_DIR ?? "./keys";
 const OUT_ROOT = arg("out") ?? process.env.BACKUP_DIR ?? "./backups";
 

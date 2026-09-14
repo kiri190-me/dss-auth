@@ -32,8 +32,9 @@
 
     ── DB가 저장소의 것이 아닌 이유 ────────────────────────────────────────
     2026-09-03부터 이 PC의 DB는 NAS와 같은 모양의 공용 인스턴스 둘이다. 포털은
-    인증 전용 인스턴스 dss-pg-auth를 혼자 쓴다. 그래서 저장소의 db:up을 부르지
-    않고 dss-deploy가 만든 컨테이너를 켠다. 자세한 것은
+    인증 전용 인스턴스 dss-pg-auth를 혼자 쓴다. 그래서 저장소의 옛
+    docker-compose.yml(은퇴)을 쓰지 않고 dss-deploy가 만든 컨테이너를 켠다 —
+    scripts\db-up.ps1, 곧 npm run db:up과 같은 것이다. 자세한 것은
     dss-deploy\runbook\01-postgres-통합.md 9절 부록.
 
 .PARAMETER WithClaude
@@ -68,15 +69,8 @@ $DevUrl        = 'http://localhost:3100'
 # NAS 이식 2단계 리허설 뒤로 이 PC의 DB는 dss-pg-app(A/S·계측기 공용)과
 # dss-pg-auth(포털 전용) 둘뿐이다. 인증 DB를 따로 세우는 이유는 등급이 달라서다 —
 # 서명 개인키·카카오 시크릿을 다루므로 업무 DB가 털려도 닿지 못해야 한다.
-# 정의는 dss-deploy\nas\docker-compose.rehearsal.yml 한 곳에만 있고, 이 스크립트는
-# 그 파일로 만든 컨테이너를 켜고 기다릴 뿐 저장소의 db:up(옛 dss-auth-postgres-dev)은
-# 더 부르지 않는다. 옛 컨테이너는 정지된 채 2026-09-17까지 되돌리기용으로만 남는다.
-$DbContainer   = 'dss-pg-auth'
-$DbService     = 'db-auth'     # 리허설 compose 안의 서비스 이름
-$DbPort        = 5444
-$Database      = 'dss_auth'
-$DbCompose     = Join-Path $DevRoot 'dss-deploy\nas\docker-compose.rehearsal.yml'
-$DbEnvFile     = Join-Path $DevRoot 'dss-deploy\nas\.env.nas'
+# 켜는 방법은 scripts\db-up.ps1 한 곳에 있다(2번). 옛 dss-auth-postgres-dev는
+# 정지된 채 2026-09-17까지 되돌리기용으로만 남는다.
 $EnvFile       = Join-Path $RepoRoot '.env.local'
 $DockerDesktop = Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\Docker Desktop.exe'
 
@@ -120,46 +114,12 @@ if ((Invoke-Native 'docker info --format "{{.ServerVersion}}"').ExitCode -ne 0) 
 Write-Ok "실행 중"
 
 # ── 2. 로그인 포털 DB 인스턴스 (인증 전용) ─────────────────────────────────
-Write-Step "DB 인스턴스 확인 ($DbContainer)"
-$exists = (Invoke-Native "docker ps -a --filter name=^/$DbContainer`$ --format `"{{.Names}}`"").Output
-if ($exists -ne $DbContainer) {
-    # 처음 한 번만 여기로 온다. 비밀번호는 compose 옆의 .env.nas에서 온다 —
-    # 없으면 빈 값으로 만들어져 재시작 루프에 빠지므로 미리 막는다.
-    if (-not (Test-Path $DbCompose)) {
-        Write-Warn2 "인증 DB 인스턴스가 없고 만들 파일도 없습니다: $DbCompose"
-        Write-Info "dss-deploy 저장소를 Development\ 아래에 받아 온 뒤 다시 시작하세요."
-        exit 1
-    }
-    if (-not (Test-Path $DbEnvFile)) {
-        Write-Warn2 "비밀번호 파일이 없습니다: $DbEnvFile"
-        Write-Info "dss-deploy\README.md 1단계 2번대로 .env.nas 를 채운 뒤 다시 시작하세요."
-        exit 1
-    }
-    Write-Info "컨테이너가 없습니다. dss-deploy 의 리허설 compose 로 새로 만듭니다."
-    $up = Invoke-Native "docker compose -f `"$DbCompose`" --env-file `"$DbEnvFile`" up -d $DbService"
-    if ($up.ExitCode -ne 0) {
-        Write-Warn2 "DB를 띄우지 못했습니다."
-        $up.Output -split "`n" | ForEach-Object { Write-Info $_ }
-        exit 1
-    }
-} else {
-    # 이미 만들어진 컨테이너는 start로 켠다 — 비밀번호 파일이 필요 없고 볼륨이
-    # 그대로 붙는다. '전부 한 번에'가 먼저 켜 두었으면 그냥 지나간다.
-    Invoke-Native "docker start $DbContainer" | Out-Null
-}
-
-$healthy = $false
-foreach ($i in 1..30) {
-    $state = (Invoke-Native "docker inspect --format ""{{.State.Health.Status}}"" $DbContainer").Output
-    if ($state -eq 'healthy') { $healthy = $true; break }
-    Start-Sleep -Seconds 2
-}
-if ($healthy) {
-    Write-Ok "준비됨 (127.0.0.1:$DbPort · $Database)"
-} else {
-    Write-Warn2 "DB가 아직 준비되지 않았습니다. 잠시 뒤 다시 확인하세요."
-    Write-Info "docker logs $DbContainer --tail 30 으로 원인을 볼 수 있습니다."
-}
+# 켜는 방법은 db-up.ps1 한 곳에만 있다 — npm run db:up과 같은 것을 부른다.
+# 없으면 .env.nas를 확인하고 만들고, 있으면 켜고 healthy를 기다린다.
+# 종료 코드 1(켜지 못함)이면 멈추고, 2(아직 healthy 아님)는 경고만 보고 이어 간다.
+# '전부 한 번에'가 먼저 켜 두었으면 그냥 지나간다.
+& (Join-Path $PSScriptRoot 'db-up.ps1')
+if ($LASTEXITCODE -eq 1) { exit 1 }
 
 # ── 3. 접속 주소 점검 ─────────────────────────────────────────────────────
 # 이 프로젝트에서 가장 자주 시간을 잡아먹는 지점이다.

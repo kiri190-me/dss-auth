@@ -58,10 +58,8 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 
 $RepoRoot  = Split-Path -Parent $PSScriptRoot
-# 2026-09-03 NAS 이식 2단계 리허설 뒤로 포털 DB는 인증 전용 인스턴스 dss-pg-auth의
-# dss_auth에 있다. 이 인스턴스는 포털만 쓰므로 여기서 그냥 끈다. 옛
-# dss-auth-postgres-dev는 정지된 채 2026-09-17까지 되돌리기용으로만 남는다.
-$Container = 'dss-pg-auth'
+# 포털 DB(인증 전용 인스턴스 dss-pg-auth)를 끄는 방법은 scripts\db-down.ps1 한
+# 곳에 있다(4번). 이 인스턴스는 포털만 쓰므로 상대를 살피지 않고 그냥 끈다.
 $DevPort   = 3100
 
 # 네이티브 명령은 cmd를 거쳐 부른다. Windows PowerShell 5.1은 exe의 stderr를
@@ -155,20 +153,10 @@ if (-not $listener) {
 }
 
 # ── 4. 컨테이너 정지 (자료는 그대로 남는다) ───────────────────────────────
-Write-Step "로그인 포털 DB 컨테이너 정지"
-$running = (Invoke-Native "docker ps --filter name=^/$Container`$ --format `"{{.Names}}`"").Output
-if ($running -ne $Container) {
-    Write-Ok "이미 꺼져 있음"
-} elseif ($DryRun) {
-    Write-Info "실행할 명령: docker stop $Container"
-} else {
-    $stop = Invoke-Native "docker stop $Container"
-    if ($stop.ExitCode -eq 0) {
-        Write-Ok "정지됨 — 자료는 볼륨에 그대로 남아 있습니다"
-    } else {
-        Write-Warn2 "정지 실패:"; Write-Host $stop.Output
-    }
-}
+# 끄는 방법은 db-down.ps1 한 곳에만 있다 — npm run db:down과 같은 것을 부른다.
+# 서버를 3번에서 먼저 껐으므로 여기서 DB를 꺼도 끊길 연결이 없다.
+# 정지에 실패해도 경고만 보고 끝인사까지 간다(원래 그랬다).
+& (Join-Path $PSScriptRoot 'db-down.ps1') -DryRun:$DryRun
 
 if (-not $NoFooter) {
     Write-Host ""

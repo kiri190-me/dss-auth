@@ -1,9 +1,30 @@
-# dss-auth 전용 PostgreSQL.
+# ════ 은퇴한 파일이다 — 이 파일로 아무것도 띄우지 마세요 ════════════════
 #
-# ⚠️ 반드시 `npm run db:up`으로 띄우세요.
+# 포털 DB는 NAS 이식 2단계 리허설(2026-09-03) 뒤로 인증 전용 인스턴스
+# dss-pg-auth(127.0.0.1:5444 · dss_auth)에 있다. 그 정의는
+# ../dss-deploy/nas/docker-compose.rehearsal.yml 한 곳에만 있고, 이 저장소는
+# scripts/db-up.ps1 · db-down.ps1로 그 컨테이너를 켜고 끌 뿐이다.
+#
+# - npm 스크립트는 더는 이 파일을 쓰지 않는다. db:up · db:down · db:psql은
+#   전부 dss-pg-auth를 본다(2026-09-14부터).
+# - 이 폴더에서 `docker compose up`을 하지 마세요. 앱이 보지 않는 옛 상자
+#   dss-auth-postgres-dev가 켜지고, 그 안의 자료는 전환 직전에 멈춰 있다.
+#   `docker compose down`도 하지 마세요. 옛 컨테이너가 지워져 아래 되돌리기가
+#   docker start 한 번으로 끝나지 않게 된다.
+# - 옛 컨테이너와 볼륨(dss-auth-postgres-dev-data)은 dss-deploy Phase 7
+#   (2026-09-17 이후) 전까지 되돌리기 수단으로만 남아 있다. 되돌리기에는 이
+#   파일이 필요 없다 — 컨테이너가 이미 있으므로 `docker start dss-auth-postgres-dev`
+#   한 번이다. 절차는 ../dss-deploy/runbook/01-postgres-통합.md 9절 부록
+#   「지금 되돌리려면」(DATABASE_URL도 함께 되돌린다).
+# - Phase 7에 옛 볼륨을 회수할 때 이 파일도 함께 지운다. .env.local의
+#   DEV_POSTGRES_PASSWORD는 이 파일만 읽으므로 그때 같이 지운다.
+#
+# ── 아래는 은퇴 전의 설명이다 ────────────────────────────────────────────
+#
+# dss-auth 전용 PostgreSQL. 옛 `npm run db:up`으로 띄웠다.
 #   docker compose는 .env만 자동으로 읽고 .env.local은 읽지 않습니다. 그냥
 #   `docker compose up`을 하면 POSTGRES_PASSWORD가 빈 값이 되어 컨테이너가
-#   재시작 루프에 빠집니다. db:up 스크립트가 --env-file .env.local을 붙입니다.
+#   재시작 루프에 빠집니다. 옛 db:up 스크립트가 --env-file .env.local을 붙였습니다.
 #
 # 포트가 5434인 이유: 같은 개발 PC에서 A/S 관리 시스템의 DB가 이미
 # 5432(dev)와 5433(staging)을 쓰고 있다. 두 프로젝트를 동시에 띄워야
