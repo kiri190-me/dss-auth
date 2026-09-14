@@ -10,6 +10,8 @@ export type AdminClientRow = {
   requiresGrant: boolean;
   isActive: boolean;
   availableRoles: string[];
+  // 순서 변경 액션이 값이 바뀐 행만 고쳐 쓰도록 함께 읽는다.
+  sortOrder: number;
 };
 
 export type AdminGrantRow = {
@@ -18,7 +20,12 @@ export type AdminGrantRow = {
   role: string | null;
 };
 
-/** 관리 화면이 시스템별 칸을 그리기 위한 목록. */
+/**
+ * 관리 화면이 시스템별 칸을 그리기 위한 목록.
+ *
+ * 순서 변경 액션도 이 함수를 그대로 부른다. 값이 같은 행끼리의 차례는 DB가
+ * 정하므로, 액션이 따로 정렬하면 관리자가 본 차례와 옮기는 차례가 어긋난다.
+ */
 export async function listClientsForAdmin(): Promise<AdminClientRow[]> {
   return db
     .select({
@@ -28,6 +35,7 @@ export async function listClientsForAdmin(): Promise<AdminClientRow[]> {
       requiresGrant: clients.requiresGrant,
       isActive: clients.isActive,
       availableRoles: clients.availableRoles,
+      sortOrder: clients.sortOrder,
     })
     .from(clients)
     .orderBy(asc(clients.sortOrder), asc(clients.name));

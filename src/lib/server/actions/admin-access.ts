@@ -7,20 +7,38 @@ import {
   GRANTED_NO_ROLE,
   NO_ACCESS,
 } from "@/lib/auth/client-access-values";
+import { isMoveDirection, moveOneStep, renumber } from "@/lib/auth/client-order";
 import { assertPortalAdmin } from "@/lib/auth/portal-admin";
 import { db } from "@/lib/db/client";
 import { appendAuditLog } from "@/lib/db/mutations/audit";
+import { listClientsForAdmin } from "@/lib/db/queries/admin-access";
 import { clients, userClientGrants, users } from "@/lib/db/schema";
 
 const ADMIN_USERS_PATH = "/admin/users";
+const APPS_PATH = "/apps";
 
-function fail(reason: string): never {
-  redirect(`${ADMIN_USERS_PATH}?error=${encodeURIComponent(reason)}`);
+/**
+ * 결과 화면에서 펼쳐 둘 칸. 순서를 여러 칸 옮길 때 누를 때마다 접혀서
+ * 다시 펼쳐야 하는 일을 없앤다.
+ */
+type OpenPanel = "order";
+
+function adminUsersUrl(
+  kind: "ok" | "error",
+  message: string,
+  open?: OpenPanel
+): string {
+  const panel = open ? `&open=${open}` : "";
+  return `${ADMIN_USERS_PATH}?${kind}=${encodeURIComponent(message)}${panel}`;
 }
 
-function done(notice: string): never {
+function fail(reason: string, open?: OpenPanel): never {
+  redirect(adminUsersUrl("error", reason, open));
+}
+
+function done(notice: string, open?: OpenPanel): never {
   revalidatePath(ADMIN_USERS_PATH);
-  redirect(`${ADMIN_USERS_PATH}?ok=${encodeURIComponent(notice)}`);
+  redirect(adminUsersUrl("ok", notice, open));
 }
 
 function field(formData: FormData, key: string): string {
@@ -171,4 +189,72 @@ export async function setClientAccess(formData: FormData) {
       ? `${target.displayName}님에게 ${client.name} 권한을 주었습니다. (${nextRole})`
       : `${target.displayName}님에게 ${client.name} 권한을 주었습니다.`
   );
+}
+
+/**
+ * 연결된 시스템의 표시 순서를 한 칸 옮긴다.
+ *
+ * 권한과는 관계가 없다 — 직원들이 매일 여는 시스템 목록의 차례가 바뀔 뿐이다.
+ * 그래도 감사 기록은 남긴다. 모두가 보는 화면의 모양을 누가 언제 바꿨는지는
+ * 물어볼 사람이 생긴다.
+ */
+export async function moveClientOrder(formData: FormData) {
+  const actor = await assertPortalAdmin();
+
+  const clientRecordId = field(formData, "clientId");
+  const direction = field(formData, "direction");
+  if (!clientRecordId || !isMoveDirection(direction)) {
+    fail("대상을 찾을 수 없습니다.", "order");
+  }
+
+  const current = await listClientsForAdmin();
+  const target = current.find((client) => client.id === clientRecordId);
+  if (!target) fail("시스템을 찾을 수 없습니다.", "order");
+
+  const before = current.map((client) => client.id);
+  const after = moveOneStep(before, target.id, direction);
+  if (!after) {
+    done(
+      `${target.name}은(는) 이미 맨 ${direction === "up" ? "위" : "아래"}입니다.`,
+      "order"
+    );
+  }
+
+  // 한 번에 바꾼다. 중간에 끊겨 절반만 바뀌면 값이 겹친 행이 생기고, 그
+  // 행들의 차례는 다시 DB의 이름 정렬에 맡겨진다.
+  const nextSortOrder = renumber(after);
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    for (const client of current) {
+      const sortOrder = nextSortOrder.get(client.id) ?? client.sortOrder;
+      if (sortOrder === client.sortOrder) continue;
+      await tx
+        .update(clients)
+        .set({ sortOrder, updatedAt: now })
+        .where(eq(clients.id, client.id));
+    }
+  });
+
+  const nameOf = new Map(current.map((client) => [client.id, client.name]));
+  const from = before.indexOf(target.id) + 1;
+  const to = after.indexOf(target.id) + 1;
+  await appendAuditLog({
+    actorUserId: actor.userId,
+    actionType: "CLIENT_UPDATED",
+    targetEntity: "clients",
+    targetRecordId: target.id,
+    previousValue: {
+      position: from,
+      order: before.map((id) => nameOf.get(id)),
+    },
+    newValue: {
+      name: target.name,
+      position: to,
+      order: after.map((id) => nameOf.get(id)),
+    },
+    clientId: target.clientId,
+  });
+
+  revalidatePath(APPS_PATH);
+  done(`${target.name}을(를) ${to}번째로 옮겼습니다.`, "order");
 }

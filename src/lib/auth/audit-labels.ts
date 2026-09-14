@@ -102,6 +102,17 @@ export function auditSummary(entry: {
       if (who && role) return `${who} · ${role}`;
       return who ?? null;
     }
+    case "CLIENT_UPDATED": {
+      // 지금은 표시 순서를 옮길 때만 남는다. 다른 변경이 이 유형을 쓰기
+      // 시작해도 이름은 보이도록, 차례 값이 없으면 이름만 돌려준다.
+      const name = str(next.name);
+      const from = int(prev.position);
+      const to = int(next.position);
+      if (name && from !== null && to !== null) {
+        return `${name} · ${from}번째 → ${to}번째`;
+      }
+      return name;
+    }
     case "LOGIN_FAILED": {
       const reason = str(next.reason);
       const via = str(next.via);
@@ -131,4 +142,8 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function str(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
+}
+
+function int(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
 }

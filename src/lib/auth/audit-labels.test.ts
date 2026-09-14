@@ -91,6 +91,28 @@ test("권한 부여는 사람과 역할을 함께 보여준다", () => {
   );
 });
 
+test("시스템 순서 변경은 어느 시스템이 몇 번째로 갔는지 보여준다", () => {
+  assert.equal(
+    auditSummary({
+      actionType: "CLIENT_UPDATED",
+      previousValue: { position: 2 },
+      newValue: { name: "DSS A/S 관리 시스템", position: 1 },
+      clientId: "rf-service-system",
+    }),
+    "DSS A/S 관리 시스템 · 2번째 → 1번째"
+  );
+  // 차례가 없는 변경이 이 유형을 쓰게 되어도 이름은 보인다.
+  assert.equal(
+    auditSummary({
+      actionType: "CLIENT_UPDATED",
+      previousValue: null,
+      newValue: { name: "DSS A/S 관리 시스템" },
+      clientId: "rf-service-system",
+    }),
+    "DSS A/S 관리 시스템"
+  );
+});
+
 test("실패 사유를 그대로 옮긴다", () => {
   assert.equal(
     auditSummary({

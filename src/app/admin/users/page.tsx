@@ -3,6 +3,7 @@ import {
   GRANTED_NO_ROLE,
   NO_ACCESS,
 } from "@/lib/auth/client-access-values";
+import type { MoveDirection } from "@/lib/auth/client-order";
 import { requirePortalAdmin } from "@/lib/auth/portal-admin";
 import {
   indexGrants,
@@ -13,7 +14,10 @@ import {
 } from "@/lib/db/queries/admin-access";
 import { listUsersForAdmin, type AdminUserRow } from "@/lib/db/queries/admin-users";
 import { formatDateTime } from "@/lib/format";
-import { setClientAccess } from "@/lib/server/actions/admin-access";
+import {
+  moveClientOrder,
+  setClientAccess,
+} from "@/lib/server/actions/admin-access";
 import {
   approveUser,
   reactivateUser,
@@ -177,6 +181,92 @@ function ClientAccessBlock({
   );
 }
 
+function MoveButton({
+  client,
+  direction,
+  disabled,
+}: {
+  client: AdminClientRow;
+  direction: MoveDirection;
+  disabled: boolean;
+}) {
+  const label = direction === "up" ? "위로" : "아래로";
+  return (
+    <form action={moveClientOrder}>
+      <input type="hidden" name="clientId" value={client.id} />
+      <input type="hidden" name="direction" value={direction} />
+      <button
+        type="submit"
+        disabled={disabled}
+        aria-label={`${client.name} ${label}`}
+        title={label}
+        className={`${BTN} ${BTN_PLAIN} py-1.5`}
+      >
+        {direction === "up" ? "↑" : "↓"}
+      </button>
+    </form>
+  );
+}
+
+/**
+ * 연결된 시스템의 표시 순서.
+ *
+ * 이 차례가 직원들이 보는 시스템 목록(/apps)의 타일과 아래 「시스템 접근·역할」
+ * 칸에 그대로 쓰인다. 끌어서 놓기 대신 한 칸씩 옮기는 버튼을 둔 이유: 이
+ * 화면의 다른 칸처럼 자바스크립트 없이도 동작해야 하고, 시스템이 한 자릿수라
+ * 두세 번 누르면 끝난다.
+ */
+function ClientOrderBlock({
+  clients,
+  open,
+}: {
+  clients: AdminClientRow[];
+  open: boolean;
+}) {
+  // 하나뿐이면 옮길 곳이 없다.
+  if (clients.length < 2) return null;
+
+  return (
+    <details open={open} className="mt-6">
+      <summary
+        className={`${BTN} ${BTN_PLAIN} inline-block cursor-pointer list-none`}
+      >
+        시스템 표시 순서
+      </summary>
+      <ol className="mt-2 divide-y divide-zinc-200 rounded-md border border-zinc-200 px-3 dark:divide-zinc-800 dark:border-zinc-800">
+        {clients.map((client, index) => (
+          <li
+            key={client.id}
+            className="flex items-center justify-between gap-2 py-1.5"
+          >
+            <div className="min-w-0">
+              <span className="mr-2 text-xs tabular-nums text-zinc-500">
+                {index + 1}
+              </span>
+              <span className="text-sm">{client.name}</span>
+              {client.isActive ? null : (
+                <span className="ml-1.5 text-xs text-amber-600">비활성</span>
+              )}
+            </div>
+            <div className="flex shrink-0 gap-1.5">
+              <MoveButton client={client} direction="up" disabled={index === 0} />
+              <MoveButton
+                client={client}
+                direction="down"
+                disabled={index === clients.length - 1}
+              />
+            </div>
+          </li>
+        ))}
+      </ol>
+      <p className="mt-2 text-xs text-zinc-500">
+        이 순서가 직원들이 보는 시스템 목록과 아래 「시스템 접근·역할」 칸에 그대로
+        쓰입니다. 비활성 시스템은 직원 목록에 나오지 않지만 자리는 지킵니다.
+      </p>
+    </details>
+  );
+}
+
 function ProfileFields({ user }: { user: AdminUserRow }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -237,10 +327,10 @@ function ProfileFields({ user }: { user: AdminUserRow }) {
 export default async function AdminUsersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ok?: string; error?: string }>;
+  searchParams: Promise<{ ok?: string; error?: string; open?: string }>;
 }) {
   const admin = await requirePortalAdmin();
-  const { ok, error } = await searchParams;
+  const { ok, error, open } = await searchParams;
   const all = await listUsersForAdmin();
   const clientList = await listClientsForAdmin();
   const grants = indexGrants(await listGrantsForAdmin());
@@ -266,6 +356,8 @@ export default async function AdminUsersPage({
           {ok}
         </p>
       ) : null}
+
+      <ClientOrderBlock clients={clientList} open={open === "order"} />
 
       <section className="mt-8">
         <h2 className="text-sm font-semibold">
