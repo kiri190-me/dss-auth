@@ -12,7 +12,7 @@
  * 그 의존성이 있었다.)
  *
  * 사용법:
- *   npm run icons        → public/icons/ 아래 4개를 다시 만든다
+ *   npm run icons        → public/icons/ 아래 4개와 src/app/favicon.ico 를 다시 만든다
  *
  * 로고가 바뀌면 아래 색과 비율만 고치고 다시 돌리면 된다.
  */
@@ -92,22 +92,35 @@ function chunk(type: string, body: Buffer): Buffer {
   return Buffer.concat([head, typed, crc]);
 }
 
-function encodePng(canvas: Canvas): Buffer {
+/**
+ * `alpha` 를 켜면 RGBA(색 유형 6)로 쓴다 — 알파는 전부 불투명(255)이라 그림은 같다.
+ * 파비콘(ICO) 안의 PNG 에만 쓴다(아래 FAVICON 주석). 홈 화면 아이콘은 지금처럼 RGB 다.
+ */
+function encodePng(canvas: Canvas, options: { alpha?: boolean } = {}): Buffer {
   const { size, data } = canvas;
+  const channels = options.alpha ? 4 : 3;
+  const stride = size * channels + 1;
 
   // 각 줄 앞에 필터 바이트 0(필터 없음)을 붙인다 — 규격이 요구한다.
-  const raw = Buffer.alloc(size * (size * 3 + 1));
+  const raw = Buffer.alloc(size * stride);
   for (let y = 0; y < size; y += 1) {
-    const at = y * (size * 3 + 1);
+    const at = y * stride;
     raw[at] = 0;
-    Buffer.from(data.subarray(y * size * 3, (y + 1) * size * 3)).copy(raw, at + 1);
+    for (let x = 0; x < size; x += 1) {
+      const from = (y * size + x) * 3;
+      const to = at + 1 + x * channels;
+      raw[to] = data[from];
+      raw[to + 1] = data[from + 1];
+      raw[to + 2] = data[from + 2];
+      if (options.alpha) raw[to + 3] = 0xff;
+    }
   }
 
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(size, 0);
   ihdr.writeUInt32BE(size, 4);
   ihdr[8] = 8; // 채널당 8비트
-  ihdr[9] = 2; // 색 유형 2 = RGB(알파 없음)
+  ihdr[9] = options.alpha ? 6 : 2; // 색 유형 6 = RGBA, 2 = RGB(알파 없음)
   ihdr[10] = 0; // 압축: deflate
   ihdr[11] = 0; // 필터: 기본
   ihdr[12] = 0; // 인터레이스: 없음
@@ -118,6 +131,32 @@ function encodePng(canvas: Canvas): Buffer {
     chunk("IDAT", deflateSync(raw, { level: 9 })),
     chunk("IEND", Buffer.alloc(0)),
   ]);
+}
+
+/**
+ * 여러 크기의 PNG 를 ICO 한 파일로 묶는다 — ICO 는 PNG 를 그대로 담을 수 있다
+ * (Windows Vista 이후, 모든 요즘 브라우저가 읽는다).
+ */
+function encodeIco(images: readonly { size: number; png: Buffer }[]): Buffer {
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0); // 예약
+  header.writeUInt16LE(1, 2); // 1 = 아이콘
+  header.writeUInt16LE(images.length, 4);
+
+  let offset = 6 + 16 * images.length;
+  const entries = images.map(({ size, png }) => {
+    const entry = Buffer.alloc(16);
+    entry[0] = size >= 256 ? 0 : size; // 0 은 256 이다(규격)
+    entry[1] = size >= 256 ? 0 : size;
+    entry.writeUInt16LE(1, 4); // 색 평면
+    entry.writeUInt16LE(32, 6); // 픽셀당 비트
+    entry.writeUInt32LE(png.length, 8);
+    entry.writeUInt32LE(offset, 12);
+    offset += png.length;
+    return entry;
+  });
+
+  return Buffer.concat([header, ...entries, ...images.map((image) => image.png)]);
 }
 
 // ── 그리기 ──
@@ -178,3 +217,24 @@ for (const target of TARGETS) {
 }
 
 console.log(`\n${TARGETS.length}개를 public/icons/ 에 만들었습니다.`);
+
+/**
+ * 데스크톱 북마크 · 탭 아이콘(src/app/favicon.ico).
+ *
+ * 2026-09-15 사용자: 북마크에 Next.js 기본 삼각형이 떴다 — 프로젝트를 만들 때 들어온
+ * 파일 그대로였다. 홈 화면 아이콘과 같은 표식을 같은 비율(보통 아이콘 0.82)로
+ * 16 · 32 · 48 · 256 에 그린다. 작은 크기는 큰 그림을 줄이지 않고 **그 크기에서 직접
+ * 그린다** — 줄이면 사각형 가장자리가 뭉개진다.
+ *
+ * 🔴 **RGBA(색 유형 6)로 쓴다.** Next.js 는 ICO 안의 PNG 를 RGBA 로만 풀어서, 알파
+ * 없는 RGB 면 「The PNG is not in RGBA format!」으로 화면이 전부 막힌다(A/S 시스템에서
+ * 같은 날 실제로 났다). 알파는 전부 불투명이라 그림은 홈 화면 아이콘과 같다.
+ */
+const FAVICON = join(process.cwd(), "src", "app", "favicon.ico");
+const FAVICON_SIZES = [16, 32, 48, 256];
+
+const favicon = encodeIco(
+  FAVICON_SIZES.map((size) => ({ size, png: encodePng(drawMark(size, 0.82), { alpha: true }) }))
+);
+writeFileSync(FAVICON, favicon);
+console.log(`  ${"src/app/favicon.ico".padEnd(24)} ${FAVICON_SIZES.join("·")}  ${favicon.length}바이트`);
