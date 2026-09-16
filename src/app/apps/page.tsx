@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import SignOutButton from "@/components/SignOutButton";
 import { listAccessibleClients } from "@/lib/db/queries/clients";
+import { APP_VERSION } from "@/lib/release-notes";
 import { readSsoSession } from "@/lib/session/sso-session";
 
 export const metadata: Metadata = { title: "시스템 목록 | DSS 통합 로그인" };
@@ -63,6 +64,17 @@ export default async function AppsPage() {
           ))}
         </ul>
       )}
+
+      {/*
+        머리말이 아니라 여기에 둔다. 위쪽은 이름·사용자 관리·로그아웃으로 이미
+        좁고, 버전은 찾을 때만 보면 되는 것이라 목록 끝이 제자리다.
+      */}
+      <Link
+        href="/release-notes"
+        className="mt-10 inline-block text-xs text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+      >
+        v{APP_VERSION} · 업데이트 소식
+      </Link>
     </main>
   );
 }

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import DssLogo from "@/components/DssLogo";
+import { APP_VERSION } from "@/lib/release-notes";
 import { sanitizeReturnTo } from "@/lib/session/login-tx";
 import { readSsoSession } from "@/lib/session/sso-session";
 
@@ -106,6 +107,24 @@ export default async function SignInPage({
         className="mt-8 text-center text-xs text-zinc-400 underline underline-offset-2 hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-400"
       >
         카카오를 쓸 수 없나요?
+      </a>
+
+      {/*
+        지금 이 화면이 몇 번인지 드러내는 자리이기도 하다. 배포한 뒤에도
+        브라우저가 캐시한 옛 화면을 보고 있으면 여기 번호가 낮게 남아 있어,
+        "고쳤다는데 그대로다" 하는 오해를 전화 한 통 없이 가려낼 수 있다.
+
+        바로 위 비상 로그인 링크보다 밝은 것은 실수가 아니다. 처음엔 같은
+        색(zinc-400/600)으로 뒀다가 되돌렸다 — 다크 모드에서 zinc-600은 거의
+        검은 바탕에 묻혀 대비가 2.5:1 밖에 안 됐다. 12px 글자에 필요한 4.5:1에
+        한참 못 미친다. 이 줄은 전화로 "화면 아래 번호 좀 불러 주세요" 하고
+        묻게 되는 줄이라, 눈에 띄지 않는 것보다 읽히는 것이 먼저다.
+      */}
+      <a
+        href="/release-notes"
+        className="mt-3 text-center text-xs text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+      >
+        v{APP_VERSION} · 업데이트 소식
       </a>
     </main>
   );

@@ -19,3 +19,16 @@ export function formatDateTime(value: Date | null): string {
   if (!value) return "—";
   return DATE_TIME.format(value);
 }
+
+/**
+ * 배포 날짜 표기. "2026-09-15" → "2026년 9월 15일"
+ *
+ * 위의 formatDateTime 과 달리 Date 를 만들지 않고 문자열을 쪼갠다. 배포 날짜는
+ * 사람이 손으로 적은 달력상의 하루일 뿐 시각이 아닌데, new Date("2026-09-15")
+ * 로 바꾸는 순간 UTC 자정이 되어 시간대에 따라 하루가 밀린다. 이 파일이 이미
+ * 한 번 겪은 문제(위 주석)를 같은 파일에서 되풀이하지 않는다.
+ */
+export function formatReleaseDate(date: string): string {
+  const [year, month, day] = date.split("-");
+  return `${year}년 ${Number(month)}월 ${Number(day)}일`;
+}
