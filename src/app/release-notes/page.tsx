@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { formatReleaseDate } from "@/lib/format";
-import { APP_VERSION, RELEASES, type ReleaseKind } from "@/lib/release-notes";
+import { APP_VERSION, RELEASES, type ReleaseKind, type ReleaseSystem } from "@/lib/release-notes";
 
 export const metadata: Metadata = {
   title: "업데이트 소식 | DSS 통합 로그인",
@@ -27,13 +27,27 @@ const KIND_CHIP: Record<ReleaseKind, string> = {
   고침: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300",
 };
 
+/**
+ * 시스템 칩 색. 갈래 칩(KIND_CHIP)과 같은 이유로 클래스를 통째로 적는다 —
+ * 문자열을 조합하면 Tailwind 가 그 색을 빌드 결과에서 빼 버린다.
+ * 갈래 칩(파랑 · 초록 · 노랑)과 부딪히지 않게 회색 계열 한 벌로 두고, 글자로 가른다.
+ */
+const SYSTEM_CHIP: Record<ReleaseSystem, string> = {
+  "통합 로그인":
+    "border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200",
+  "A/S 관리":
+    "border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200",
+  "계측기 관리":
+    "border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200",
+};
+
 export default function ReleaseNotesPage() {
   return (
     <main className="mx-auto w-full max-w-2xl px-6 py-12">
       <header>
         <h1 className="text-xl font-semibold">업데이트 소식</h1>
         <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-          통합 로그인이 바뀔 때마다 여기에 적습니다. 지금 보고 계신 화면은{" "}
+          사내 시스템이 바뀔 때마다 여기에 적습니다. 지금 보고 계신 로그인 화면은{" "}
           <span className="font-medium text-zinc-900 dark:text-zinc-100">
             v{APP_VERSION}
           </span>{" "}
@@ -42,22 +56,22 @@ export default function ReleaseNotesPage() {
       </header>
 
       <ol className="mt-10 space-y-8">
-        {RELEASES.map((release, index) => (
+        {RELEASES.map((release) => (
           <li
-            key={release.version}
+            key={`${release.system}-${release.version}`}
             className="border-t border-zinc-200 pt-8 first:border-t-0 first:pt-0 dark:border-zinc-800"
           >
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <h2 className="text-lg font-semibold">v{release.version}</h2>
               {/*
-                맨 위 하나에만 붙는다. 이 목록은 최신이 맨 앞이므로 index 0 이
-                곧 지금 돌고 있는 버전이다.
+                어느 시스템의 소식인지 먼저 밝힌다 — 번호만 있으면 A/S 1.3 과
+                통합 로그인 1.3 을 같은 것으로 읽게 된다.
               */}
-              {index === 0 ? (
-                <span className="rounded-full border border-zinc-300 px-2 py-0.5 text-[11px] font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
-                  최신
-                </span>
-              ) : null}
+              <span
+                className={`rounded-md border px-2 py-0.5 text-xs font-medium ${SYSTEM_CHIP[release.system]}`}
+              >
+                {release.system}
+              </span>
+              <h2 className="text-lg font-semibold">v{release.version}</h2>
               <time
                 dateTime={release.date}
                 className="text-sm text-zinc-500 dark:text-zinc-400"
