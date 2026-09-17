@@ -8,6 +8,7 @@
  * 순수 함수로 둔 이유: 값이 하나만 틀려도 모든 연동이 조용히 깨지는데,
  * 서버를 띄우지 않고 테스트로 확인할 수 있어야 한다.
  */
+import { SERVICE_MENU_CLAIM } from "./service-menu";
 
 /** 우리가 지원한다고 선언하는 것만 적는다. 안 하는 것을 적으면 클라이언트가 그걸 시도한다. */
 export function buildDiscoveryDocument(issuer: string) {
@@ -53,6 +54,11 @@ export function buildDiscoveryDocument(issuer: string) {
       // 표준 클레임이 아니다. 값은 받는 시스템마다 다르고(그 시스템의 역할
       // 목록에서 온다), 지정되지 않았으면 아예 실리지 않는다.
       "role",
+      // 표준 클레임이 아니다. 이 사람이 쓸 수 있는 서비스 목록으로,
+      // 서비스 전환 메뉴바의 재료다(service-menu.ts). 여기 적어 두는 이유는
+      // 나머지 항목과 같다 — 연동하는 쪽이 이 문서만 읽고도 무엇이 오는지
+      // 알 수 있어야 한다. 쓸 서비스가 없으면 빈 배열로 온다.
+      SERVICE_MENU_CLAIM,
     ],
     // 지원하지 않음을 명시한다. 생략하면 기본값이 false지만, 적어두면
     // 연동하는 쪽이 문서를 뒤지지 않아도 된다.

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { appendAuditLog } from "@/lib/db/mutations/audit";
+import { listAccessibleClients } from "@/lib/db/queries/clients";
 import {
   getActiveClient,
   getClientRole,
@@ -21,6 +22,7 @@ import {
 import type { OidcErrorCode } from "@/lib/oidc/errors";
 import { signIdToken } from "@/lib/oidc/id-token";
 import { verifyPkceS256 } from "@/lib/oidc/pkce";
+import { toServiceMenu } from "@/lib/oidc/service-menu";
 
 /**
  * 토큰 응답에는 반드시 no-store를 붙인다(RFC 6749 §5.1).
@@ -225,6 +227,14 @@ export async function POST(request: Request) {
   // 사용자 상태를 바로 위에서 다시 확인하는 것과 같은 이유다.
   const role = await getClientRole(user.id, client.id);
 
+  // 서비스 전환 메뉴바의 재료(service-menu.ts). 포털 타일(/apps)과 **같은
+  // 조회**를 쓴다 — 목록을 내는 규칙이 두 벌이 되면 타일과 메뉴바가 서로
+  // 다른 말을 한다.
+  //
+  // 역할과 같은 이유로 여기서, 발급 직전에 읽는다. 인가 코드에 굳혀 두면
+  // 관리자가 방금 회수한 시스템이 메뉴바에 그대로 남는다.
+  const accessible = await listAccessibleClients(user.id);
+
   const idToken = await signIdToken({
     subject: user.id,
     audience: client.clientId,
@@ -234,6 +244,7 @@ export async function POST(request: Request) {
     name: user.displayName,
     email: user.email,
     role,
+    services: toServiceMenu(accessible),
   });
 
   const accessToken = await issueAccessToken({

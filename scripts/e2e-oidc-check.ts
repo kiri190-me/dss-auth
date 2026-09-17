@@ -20,6 +20,7 @@ import {
   primaryLanAddress,
   resolveAutoUrl,
 } from "../src/lib/config/lan-address";
+import { SERVICE_MENU_CLAIM } from "../src/lib/oidc/service-menu";
 import {
   accessTokens,
   authorizationCodes,
@@ -213,6 +214,30 @@ async function main() {
       "role이 그 시스템에서 부여받은 역할과 같다",
       claims.role === TEST_ROLE,
       String(claims.role)
+    );
+
+    // 서비스 전환 메뉴바 재료(service-menu.ts). 내용은 이 DB에 무엇이
+    // 등록돼 있느냐에 달렸으므로 모양만 본다 — 무엇이 걸러지는지는
+    // service-menu.test.ts가 못 박는다.
+    //
+    // 임시 클라이언트(__e2e-check)는 런처 주소가 없어 여기 나타나지 않는다.
+    // 그것이 정상이다: 메뉴바는 눌러서 건너가는 것이라 주소 없는 칸을 그릴
+    // 수 없다.
+    const services = claims[SERVICE_MENU_CLAIM];
+    check(
+      "쓸 수 있는 서비스 목록이 배열로 실린다(없으면 빈 배열)",
+      Array.isArray(services),
+      String(services)
+    );
+    check(
+      "각 칸에 식별자 · 이름 · 갈 주소가 있고, 그 밖의 것은 없다",
+      Array.isArray(services) &&
+        services.every((entry) => {
+          if (typeof entry !== "object" || entry === null) return false;
+          const keys = Object.keys(entry).sort().join(",");
+          return keys === "id,name,url" || keys === "icon,id,name,url";
+        }),
+      JSON.stringify(services)
     );
 
     const userinfo = await fetch(`${ISSUER}/api/oidc/userinfo`, {
