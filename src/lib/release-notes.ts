@@ -82,6 +82,18 @@ export type Release = {
  */
 export const RELEASES: readonly Release[] = [
   {
+    system: "A/S 관리",
+    version: "1.6",
+    date: "2026-09-18",
+    title: "과거 인수품을 가져오면 신고증상이 한글로 보입니다",
+    items: [
+      {
+        kind: "개선",
+        text: "과거 인수품 목록을 가져올 때 일본어로 적혀 있던 신고증상이 미리보기와 저장된 수리 건 모두에서 한글로 보입니다. 예전처럼 일부가 일본어로 남거나 한 줄 안에 섞여 있지 않습니다. 현장에서 그대로 쓰는 영어 표기는 지금처럼 그대로 둡니다.",
+      },
+    ],
+  },
+  {
     system: "통합 로그인",
     version: "1.4",
     date: "2026-09-18",
