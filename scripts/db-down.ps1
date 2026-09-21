@@ -21,7 +21,8 @@
 
     종료 코드
       0  정지됨 · 이미 꺼져 있음 · 연습 모드
-      1  docker stop 실패. 종료 스크립트는 경고만 보고 끝인사까지 간다
+      1  docker stop 실패 · docker에 물어보지 못함. 종료 스크립트는 경고만 보고
+         끝인사까지 간다
 
 .PARAMETER DryRun
     무엇을 할지 보여 주기만 하고 실제로는 끄지 않는다.
@@ -53,8 +54,17 @@ function Write-Warn2([string]$Text) { Write-Host "  ⚠ $Text" -ForegroundColor 
 function Write-Info([string]$Text)  { Write-Host "    $Text" -ForegroundColor DarkGray }
 
 Write-Step "로그인 포털 DB 컨테이너 정지"
-$running = (Invoke-Native "docker ps --filter name=^/$Container`$ --format `"{{.Names}}`"").Output
-if ($running -ne $Container) {
+$ps = Invoke-Native "docker ps --filter name=^/$Container`$ --format `"{{.Names}}`""
+if ($ps.ExitCode -ne 0) {
+    # 🔴 docker가 대답하지 않은 것을 "꺼져 있음"으로 읽으면 안 된다 — 모르는 것이다
+    # (2026-09-22). 여태 ExitCode를 버리고 출력 글자만 견주어, docker가 실패하면
+    # 그 오류 글자가 "이름이 다르다" → "이미 꺼져 있음"이 됐다. 2026-09-21에
+    # docker ps에 보이는 상자를 "이미 꺼져 있음"이라고 넘어간 것이 그 모양이다.
+    Write-Warn2 "docker에 물어보지 못했습니다 — 상자가 켜져 있는지 알 수 없어 그대로 둡니다."
+    if ($ps.Output) { Write-Info $ps.Output }
+    exit 1
+}
+if ($ps.Output -ne $Container) {
     Write-Ok "이미 꺼져 있음"
     exit 0
 }
