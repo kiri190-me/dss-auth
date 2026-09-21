@@ -17,7 +17,7 @@
     "icons": "tsx scripts/generate-icons.ts",
     "client:grant": "node --env-file=.env.local --import tsx scripts/grant-client-access.ts",
     "client:register": "node --env-file=.env.local --import tsx scripts/register-client.ts",
-    "test": "node --import tsx --test src/lib/crypto/hash.test.ts src/lib/crypto/totp.test.ts src/lib/config/transport-check.test.ts src/lib/config/lan-address.test.ts src/lib/db/retention.test.ts src/lib/auth/emergency-lockout.test.ts src/lib/auth/audit-labels.test.ts src/lib/auth/client-order.test.ts src/lib/crypto/public-jwk.test.ts src/lib/http/rate-limit.test.ts src/lib/http/client-key.test.ts src/lib/oidc/pkce.test.ts src/lib/oidc/redirect-uri.test.ts src/lib/oidc/authorize-params.test.ts src/lib/oidc/discovery-document.test.ts src/lib/oidc/service-menu.test.ts src/lib/oidc/id-token-payload.test.ts src/lib/oidc/service-token.test.ts src/lib/notifications/sources.test.ts src/lib/notifications/merge.test.ts src/lib/notifications/settings.test.ts src/lib/notifications/settings-form.test.ts src/lib/notifications/cache.test.ts src/lib/notifications/gather.test.ts src/lib/release-notes.test.ts src/app/bookmark-icon.test.ts",
+    "test": "node --import tsx --test src/lib/crypto/hash.test.ts src/lib/crypto/totp.test.ts src/lib/config/transport-check.test.ts src/lib/config/lan-address.test.ts src/lib/db/retention.test.ts src/lib/auth/emergency-lockout.test.ts src/lib/auth/audit-labels.test.ts src/lib/auth/client-order.test.ts src/lib/crypto/public-jwk.test.ts src/lib/http/rate-limit.test.ts src/lib/http/client-key.test.ts src/lib/oidc/pkce.test.ts src/lib/oidc/redirect-uri.test.ts src/lib/oidc/authorize-params.test.ts src/lib/oidc/discovery-document.test.ts src/lib/oidc/service-menu.test.ts src/lib/oidc/id-token-payload.test.ts src/lib/oidc/service-token.test.ts src/lib/notifications/sources.test.ts src/lib/notifications/merge.test.ts src/lib/notifications/settings.test.ts src/lib/notifications/settings-form.test.ts src/lib/notifications/cache.test.ts src/lib/notifications/gather.test.ts src/lib/notifications/site-feed.test.ts src/lib/release-notes.test.ts src/app/bookmark-icon.test.ts",
     "db:up": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/db-up.ps1",
     "db:down": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/db-down.ps1",
     "db:psql": "docker exec -it dss-pg-auth psql -U dss_auth_app -d dss_auth",
@@ -25,7 +25,8 @@
     "admin:promote": "node --env-file=.env.local --import tsx scripts/promote-admin.ts",
     "net:doctor": "node --env-file=.env.local --import tsx scripts/net-doctor.ts",
     "check:oidc": "node --env-file=.env.local --import tsx scripts/e2e-oidc-check.ts",
-    "check:notify": "node --conditions=react-server --env-file=.env.local --import tsx scripts/check-notifications.ts"
+    "check:notify": "node --conditions=react-server --env-file=.env.local --import tsx scripts/check-notifications.ts",
+    "check:notify:site": "node --conditions=react-server --env-file=.env.local --import tsx scripts/check-site-notifications.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

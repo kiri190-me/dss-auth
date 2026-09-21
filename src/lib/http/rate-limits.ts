@@ -64,6 +64,25 @@ export const authorizeEndpointLimiter = createRateLimiter({
 });
 
 /**
+ * 사이트가 포털에 「이 사람의 합쳐진 알림」을 물으러 오는 통로
+ * (api/integration/notifications) — 🔴 **실패한 인증만** 센다.
+ *
+ * 성공한 요청을 세지 않는 것이 이 한도의 전부다. 저 통로는 각 사이트가 화면을
+ * 그릴 때마다 부르는 곳이라, 정상 요청에 한도를 걸면 사람이 몰리는 아침에
+ * 사내 모든 시스템의 종이 함께 꺼진다. 게다가 지금은 TRUSTED_PROXY_HOPS=0이라
+ * 모두가 열쇠 하나를 나눠 쓰므로(client-key.ts) 그 사고는 실제로 일어난다.
+ *
+ * 막으려는 것은 시크릿을 두드려 보는 반복 하나다. 시크릿 자체는 32바이트
+ * 랜덤이라 추측으로 뚫리지 않지만(hash.ts), 시도마다 DB 조회가 한 번 돈다.
+ * 분당 20회면 시크릿이 틀린 사이트가 원인을 알아내기에는 넉넉하고, 반복
+ * 시도로 DB 를 태우기에는 턱없이 모자라다.
+ */
+export const siteNotificationFailureLimiter = createRateLimiter({
+  capacity: 20,
+  refillPerMinute: 20,
+});
+
+/**
  * 이 요청이 쓸 열쇠. 프록시가 없으면 모두 같은 열쇠를 받는다(client-key.ts).
  *
  * 서버 액션은 Request 객체가 없고 next/headers의 headers()를 쓰므로,
