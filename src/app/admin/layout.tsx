@@ -29,6 +29,9 @@ export default async function AdminLayout({
           <Link href="/admin/users" className="font-medium">
             사용자 관리
           </Link>
+          <Link href="/admin/notifications" className="font-medium">
+            알림 설정
+          </Link>
           <Link href="/admin/audit" className="font-medium">
             감사 기록
           </Link>
