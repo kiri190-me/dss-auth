@@ -74,6 +74,32 @@ function Write-Ok([string]$Text)    { Write-Host "  ✔ $Text" -ForegroundColor 
 function Write-Warn2([string]$Text) { Write-Host "  ⚠ $Text" -ForegroundColor Yellow }
 function Write-Info([string]$Text)  { Write-Host "    $Text" -ForegroundColor DarkGray }
 
+# 🔴 포트 표(Get-NetTCPConnection)는 CIM을 거쳐 읽는다. 그 길이 한 번 막히면
+# -ErrorAction SilentlyContinue가 오류를 삼켜 결과가 빈 목록이 되고, "안 떠
+# 있다"와 "못 봤다"가 똑같이 생긴다 — 2026-09-21에 떠 있는 이 포털의 3100을
+# "이미 꺼져 있음"이라고 넘어간 적이 있다. 그래서 표가 비었을 때는 소켓을
+# 직접 열고 HTTP로 두드려 한 번 더 본다. CIM을 거치지 않는 다른 길이다.
+# 살아 있으면 무엇으로 답했는지를 글자로, 죽었으면 $null을 돌려준다.
+function Test-StillAlive([int]$Port) {
+    $client    = New-Object System.Net.Sockets.TcpClient
+    $reachable = $false
+    try {
+        $iar = $client.BeginConnect('127.0.0.1', $Port, $null, $null)
+        if ($iar.AsyncWaitHandle.WaitOne(800)) { $client.EndConnect($iar); $reachable = $true }
+    } catch {
+    } finally { $client.Close() }
+    if (-not $reachable) { return $null }
+
+    try {
+        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/" -UseBasicParsing -TimeoutSec 3 -MaximumRedirection 0 -ErrorAction Stop
+        return "HTTP $([int]$r.StatusCode)"
+    } catch {
+        $resp = $_.Exception.Response
+        if ($resp) { return "HTTP $([int]$resp.StatusCode)" }
+        return 'TCP 연결됨(HTTP 응답 없음)'
+    }
+}
+
 Set-Location $RepoRoot
 Write-Host ""
 Write-Host "════ 로그인 포털 종료 ════" -ForegroundColor White
@@ -136,7 +162,14 @@ if ($blockers.Count -gt 0) {
 Write-Step "로그인 포털 서버 종료 ($DevPort)"
 $listener = Get-NetTCPConnection -LocalPort $DevPort -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $listener) {
-    Write-Ok "이미 꺼져 있음"
+    # 🔴 표가 비었다고 꺼진 것이 아니다 (2026-09-22). 실제로 두드려 본다.
+    $stillAlive = Test-StillAlive $DevPort
+    if ($stillAlive) {
+        Write-Warn2 "포트 목록에는 없는데 아직 응답합니다 ($stillAlive) — 끄지 못했습니다."
+        Write-Info "손으로 끄려면: netstat -ano -p tcp | findstr :$DevPort  →  taskkill /PID <번호> /F"
+    } else {
+        Write-Ok "이미 꺼져 있음"
+    }
 } else {
     $proc = Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue
     if ($proc -and $proc.ProcessName -notin @('node', 'next-server')) {
