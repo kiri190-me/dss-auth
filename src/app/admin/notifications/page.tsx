@@ -128,7 +128,18 @@ function SystemTable({
 
       <div className="overflow-x-auto rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
         <table className="w-full border-collapse text-sm">
-          <thead className="text-xs text-zinc-500">
+          {/*
+            🔴 머리 칸은 줄바꿈하지 않는다. 역할이 다섯이라 칸이 좁아 「A/S 엔지니어」
+            같은 이름이 두 줄로 접혔다. white-space 는 물려받는 성질이라 thead 에 한 번
+            적으면 **저쪽이 역할을 늘려 새 칸이 생겨도** 따라온다 — 역할마다 적으면
+            지금 다섯에만 통한다.
+
+            이름을 잘라 내지(truncate) 않고 nowrap 만 쓴 까닭: 「A/S 엔지…」는 읽을 수
+            없고, 줄이려면 포털이 역할 이름을 고쳐 쓰는 셈이 된다. 저쪽이 보낸 글자
+            그대로여야 한다(이 파일 머리말). 대신 칸이 넓어져 표가 화면을 넘으면 바깥
+            상자의 overflow-x-auto 가 가로 스크롤을 준다 — 폰에서도 이름이 온전하다.
+          */}
+          <thead className="whitespace-nowrap text-xs text-zinc-500">
             <tr>
               <th scope="col" className="py-1 pr-3 text-left font-medium">
                 알림 종류
@@ -154,11 +165,35 @@ function SystemTable({
                     읽지 않기 위한 것이다.
                   */}
                   <input type="hidden" name={KIND_MARKER_FIELD} value={row.kind} />
-                  <span className="font-medium text-zinc-900 dark:text-zinc-50">{row.label}</span>
+                  {/*
+                    종류 이름도 접히지 않게 둔다. 머리 칸이 제 너비를 가져가면 이 칸이
+                    좁아지는데, 그때 이름까지 여러 줄로 흩어지면 표를 훑을 수 없다.
+                  */}
+                  <span className="block whitespace-nowrap font-medium text-zinc-900 dark:text-zinc-50">
+                    {row.label}
+                  </span>
+                  {/*
+                    설명은 접어 둔다 — 지우지 않는다.
+
+                    종류마다 붙은 설명이 서너 줄씩이라(A/S 의 NOTIFICATION_KIND_META),
+                    여덟 줄이 모이면 표가 글 벽이 된다. 그렇다고 한 줄로 잘라 title 에
+                    숨기면 폰에서는 title 이 뜨지 않아 **볼 길이 사라진다** — 무슨
+                    알림인지 모르면 켜고 끌 수가 없다.
+
+                    <details> 는 자바스크립트가 아니라 HTML 이라 이 저장소의 규칙
+                    (서버에서만 그린다)을 그대로 지킨다. 기본은 접힘이라 화면이 성기고,
+                    펴면 **저쪽이 보낸 글자가 한 자도 빠짐없이** 나온다. 키보드로도
+                    열리고, 접힌 채로도 검색(Ctrl+F)에 걸린다.
+                  */}
                   {row.description ? (
-                    <span className="mt-0.5 block max-w-md text-xs font-normal text-zinc-500">
-                      {row.description}
-                    </span>
+                    <details className="mt-0.5 max-w-md">
+                      <summary className="cursor-pointer text-xs font-normal text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
+                        설명
+                      </summary>
+                      <p className="mt-1 text-xs font-normal leading-relaxed text-zinc-500">
+                        {row.description}
+                      </p>
+                    </details>
                   ) : null}
                 </th>
 
