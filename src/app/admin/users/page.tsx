@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import {
+  accessChoices,
+  currentAccessValue,
   GRANTED_NO_ROLE,
-  NO_ACCESS,
 } from "@/lib/auth/client-access-values";
 import type { MoveDirection } from "@/lib/auth/client-order";
 import { requirePortalAdmin } from "@/lib/auth/portal-admin";
@@ -75,11 +76,10 @@ function ClientAccessRow({
   grant: AdminGrantRow | undefined;
 }) {
   const usesRoles = client.availableRoles.length > 0;
-  const current = !grant
-    ? NO_ACCESS
-    : usesRoles
-      ? (grant.role ?? NO_ACCESS)
-      : GRANTED_NO_ROLE;
+  // 🔴 지금 상태를 값으로 바꾸는 판정은 여기서 하지 않는다
+  // (client-access-values.ts). 화면에서 조건을 세 갈래로 쓰던 것이 바로
+  // "역할이 빈 부여 행이 「권한 없음」으로 보이던" 결함이었다.
+  const current = currentAccessValue(grant);
 
   // 전 직원 공개 시스템은 부여 행이 없어도 들어간다. 그 사실을 숨기고
   // "권한 없음"만 보여주면 관리자가 오해한다.
@@ -95,7 +95,13 @@ function ClientAccessRow({
         {openToAll ? (
           <span className="ml-1.5 text-xs text-zinc-500">전 직원 공개</span>
         ) : null}
-        {usesRoles && grant && grant.role === null ? (
+        {/*
+          🔴 딱지도 고르개와 **같은 값**을 읽는다. 전에는 딱지가
+          grant.role === null 을 따로 보고, 고르개는 그 경우를 「권한 없음」으로
+          보여줬다 — 한 화면이 서로 모순된 말을 했다. 조건이 두 벌이면 언제든
+          다시 갈라진다.
+        */}
+        {usesRoles && current === GRANTED_NO_ROLE ? (
           <span className="ml-1.5 text-xs text-amber-600">역할 없음</span>
         ) : null}
       </div>
@@ -115,16 +121,20 @@ function ClientAccessRow({
           aria-label={`${user.displayName} · ${client.name} 접근`}
           className="rounded-md border border-zinc-300 bg-background px-2 py-1.5 text-sm outline-none focus:border-zinc-500 *:bg-background dark:border-zinc-700"
         >
-          <option value={NO_ACCESS}>권한 없음</option>
-          {usesRoles ? (
-            client.availableRoles.map((role) => (
-              <option key={role} value={role}>
-                {role}
-              </option>
-            ))
-          ) : (
-            <option value={GRANTED_NO_ROLE}>권한 있음</option>
-          )}
+          {/*
+            줄 목록을 여기서 만들지 않는다 — accessChoices가 「권한 없음」을
+            언제나 첫 줄에 둔다는 것을 시험으로 못 박아 두었다
+            (client-access-values.ts 주석 참조).
+
+            🔴 current 를 함께 넘긴다. 지금 값을 담은 줄이 목록에 없으면
+            브라우저가 조용히 첫 줄(「권한 없음」)을 고르고, 관리자가 「적용」을
+            누르는 순간 멀쩡한 권한이 회수된다.
+          */}
+          {accessChoices(client.availableRoles, current).map((choice) => (
+            <option key={choice.value} value={choice.value}>
+              {choice.label}
+            </option>
+          ))}
         </select>
         {/*
           자바스크립트 없이도 동작해야 하므로 onChange 자동 제출에 기대지

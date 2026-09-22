@@ -247,3 +247,105 @@ test("🔴 세션 끊기는 회수 갈래에서만 부른다", () => {
     "세션 끊기가 회수 칸 밖에 있다"
   );
 });
+
+// ───── 명령줄 도구 ─────
+//
+// 🔴 화면과 명령줄이 다르게 동작하면, 급할 때 명령줄로 회수하고 "막았다"고
+// 믿는다. 아래는 그 둘이 갈라지지 않게 잡아 두는 시험이다. 스크립트는 불러오면
+// main()이 돌아 버려(파일 맨 아래) 시험에서 부를 수 없으므로, admin-access.ts를
+// 자리로 확인하는 위 시험과 같은 방식으로 본문을 읽는다.
+
+const GRANT_CLI = "scripts/grant-client-access.ts";
+
+test("🔴 명령줄 회수도 세션을 끊는다", () => {
+  const source = readFileSync(GRANT_CLI, "utf8");
+  assert.equal(
+    source.split("cutSessionsForRevokedGrant(").length - 1,
+    1,
+    "명령줄 회수가 세션을 끊지 않는다"
+  );
+});
+
+test("🔴 명령줄은 화면과 같은 판정을 쓴다 — 판정을 두 벌로 만들지 않았다", () => {
+  const source = readFileSync(GRANT_CLI, "utf8");
+
+  assert.ok(
+    source.includes('from "../src/lib/auth/grant-revocation"'),
+    "명령줄이 판정을 불러 쓰지 않는다"
+  );
+  // 스크립트가 자기 판정을 따로 갖기 시작하면 두 길이 다시 갈라진다.
+  assert.ok(!source.includes("function decideSessionCut"), "판정이 두 벌이 됐다");
+  assert.ok(!source.includes("requiresGrant ?"), "스크립트가 자기 판정을 쓰고 있다");
+});
+
+test("🔴 명령줄이 권한을 줄 때는 끊지 않는다", () => {
+  const source = readFileSync(GRANT_CLI, "utf8");
+
+  const revoke = source.indexOf("if (revoke) {");
+  const callSite = source.indexOf("cutSessionsForRevokedGrant(");
+  // 회수 갈래 다음에 오는 것이 역할 변경(if (existing))과 새로 부여(insert)다.
+  const roleChange = source.indexOf("if (existing) {", revoke);
+  const insert = source.indexOf(".insert(userClientGrants)");
+
+  assert.ok(revoke > 0, "회수 갈래가 사라졌다");
+  assert.ok(roleChange > revoke && insert > revoke, "부여 갈래의 자리가 바뀌었다");
+  assert.ok(
+    callSite > revoke && callSite < roleChange && callSite < insert,
+    "세션 끊기가 권한을 주는 갈래까지 번졌다"
+  );
+});
+
+test("🔴 끊는 사람은 --user 다, --by 가 아니다", () => {
+  const source = readFileSync(GRANT_CLI, "utf8");
+  const start = source.indexOf("cutSessionsForRevokedGrant(");
+  const call = source.slice(start, source.indexOf("{ notifyLogout", start));
+
+  // 여기가 뒤바뀌면 회수를 실행한 관리자가 로그아웃되고, 정작 권한을 빼앗긴
+  // 사람은 계속 일한다. 오류 없이 지나가는 종류의 실수다.
+  assert.ok(call.includes("userId: target.id"), "끊는 대상이 --user 가 아니다");
+  assert.ok(call.includes("actorUserId: actor.id"), "행위자 기록이 빠졌다");
+  assert.ok(!call.includes("userId: actor.id"), "🔴 관리자를 끊고 있다");
+});
+
+test("🔴 「끊기지 않습니다」던 거짓말이 사라졌다", () => {
+  const source = readFileSync(GRANT_CLI, "utf8");
+  assert.ok(
+    !source.includes("이미 발급된 세션은 이 명령으로 끊기지 않습니다"),
+    "이제 끊는데 안 끊는다고 찍고 있다"
+  );
+  // 무엇이 일어났는지는 화면과 같은 문구로 알린다.
+  assert.ok(source.includes("sessionCutNotice("), "결과를 알리지 않는다");
+});
+
+test("🔴 명령줄이 세션을 끊을 수 있는 환경으로 등록돼 있다", () => {
+  // sendLogoutNotice는 "server-only" 모듈을 거친다. --conditions=react-server
+  // 없이 부르면 import 에서 프로세스가 죽어, 회수 자체가 안 된다.
+  const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
+    scripts: Record<string, string>;
+  };
+  assert.match(pkg.scripts["client:grant"], /--conditions=react-server/);
+});
+
+test("전 직원 공개 시스템은 명령줄에서도 건너뛴다 — 판정이 하나라서 공짜다", () => {
+  // 명령줄에만 따로 예외를 둘 필요가 없다는 것을 값으로 확인한다.
+  assert.equal(decideSessionCut(OPEN_TO_ALL), "NO_GRANT_CHECK");
+});
+
+test("🔴 역할을 쓰지 않는 시스템(dss-po)도 권한을 빼면 세션을 끊는다", async () => {
+  // 역할 목록이 비어 있는 것과 권한 확인을 하는 것은 서로 무관하다.
+  // 판정은 requiresGrant만 본다.
+  const PO: RevokedClient = {
+    clientId: "dss-po",
+    requiresGrant: true,
+    isActive: true,
+    backchannelLogoutUri: "http://po.test/api/auth/sso/backchannel-logout",
+  };
+  const { deps, notified } = spy();
+  const outcome = await cutSessionsForRevokedGrant({ ...TARGET, client: PO }, deps);
+
+  assert.deepEqual(outcome, { cut: true, skipped: null, failed: false });
+  assert.deepEqual(
+    notified.map((call) => [call.userId, call.clientId]),
+    [[TARGET.userId, "dss-po"]]
+  );
+});

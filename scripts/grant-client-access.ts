@@ -21,7 +21,8 @@
  *     → 부여
  *
  *   npm run client:grant -- --client rf-service-system --user 홍길동 --by 최희만 --revoke
- *     → 회수
+ *     → 회수. 🔴 관리 화면과 똑같이 **그 시스템에 열려 있던 세션도 끊는다**
+ *       (판정은 src/lib/auth/grant-revocation.ts 하나뿐이다).
  *
  *   npm run client:grant -- --client rf-service-system --user 홍길동 \
  *       --role AS_ENGINEER --by 최희만
@@ -31,10 +32,17 @@
  * --role 로 줄 수 있는 값은 그 시스템에 등록된 목록뿐이다
  * (clients.available_roles, npm run client:register -- --role 로 등록).
  *
+ * 🔴 역할을 쓰는 시스템에 **새로 부여할 때는 --role 이 필수다.** 역할이 빈
+ * 부여 행은 관리 화면이 설명할 수 없는 상태를 만든다(아래 부여 갈래의 주석).
+ *
  * --user 와 --by 는 사용자 id(UUID) · 이메일 · 표시 이름 중 무엇으로도 준다.
  * 이름이 겹치면 거절하고 id를 요구한다.
  */
 import { and, asc, eq } from "drizzle-orm";
+import {
+  cutSessionsForRevokedGrant,
+  sessionCutNotice,
+} from "../src/lib/auth/grant-revocation";
 import { db, pgClient } from "../src/lib/db/connection";
 import {
   auditLogs,
@@ -42,6 +50,10 @@ import {
   userClientGrants,
   users,
 } from "../src/lib/db/schema";
+// 🔴 "server-only" 모듈이다. package.json의 client:grant가
+// --conditions=react-server 로 부르는 이유가 이것이고, 그 조건이 없으면 이
+// import 에서 프로세스가 죽는다(check:notify와 같은 사정).
+import { sendLogoutNotice } from "../src/lib/oidc/backchannel-logout";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -271,6 +283,9 @@ async function main(): Promise<void> {
       requiresGrant: clients.requiresGrant,
       availableRoles: clients.availableRoles,
       isActive: clients.isActive,
+      // 아래 회수 갈래가 "그 시스템의 세션을 끊을지"를 판정하는 데 쓴다
+      // (admin-access.ts의 같은 select와 같은 까닭).
+      backchannelLogoutUri: clients.backchannelLogoutUri,
     })
     .from(clients)
     .where(eq(clients.clientId, clientIdArg));
@@ -358,8 +373,41 @@ async function main(): Promise<void> {
       clientId: client.clientId,
     });
 
+    // 🔴 관리 화면(admin-access.ts)이 부르는 그 판정을 **그대로** 부른다.
+    //
+    // 여기가 비어 있던 동안 이 명령은 "이미 발급된 세션은 끊기지 않습니다"라고
+    // 정직하게 찍고 있었지만, 그것이 곧 문제였다 — 화면으로 회수하면 끊기고
+    // 명령줄로 회수하면 안 끊겼다. 급할 때 잡는 것은 명령줄이고, 관리자는
+    // 두 길이 같은 일을 한다고 믿는다.
+    //
+    // 무엇을 끊고 무엇을 건너뛰는지·왜 그 시스템 하나에만 보내는지는
+    // grant-revocation.ts 머리말에 있다. 여기서 판정을 다시 쓰지 않는다.
+    //
+    // 부여 행을 **지운 뒤에** 부른다. 순서를 뒤집으면 통보와 삭제 사이에 그
+    // 사람이 다시 로그인해 세션을 새로 만들 수 있다.
+    const outcome = await cutSessionsForRevokedGrant(
+      {
+        // 🔴 권한을 빼앗긴 그 사람(--user)이다. actor(--by)가 아니다 —
+        // 여기가 바뀌면 회수를 실행한 관리자가 로그아웃된다.
+        userId: target.id,
+        displayName: target.displayName,
+        actorUserId: actor.id,
+        grantRecordId: existing.id,
+        client: {
+          clientId: client.clientId,
+          requiresGrant: client.requiresGrant,
+          isActive: client.isActive,
+          backchannelLogoutUri: client.backchannelLogoutUri,
+        },
+      },
+      { notifyLogout: sendLogoutNotice, audit }
+    );
+
     console.log(`${target.displayName} 의 "${client.name}" 접근 권한을 회수했습니다.`);
-    console.log("이미 발급된 세션은 이 명령으로 끊기지 않습니다 — 다음 로그인부터 막힙니다.");
+    // 화면과 같은 문구를 쓴다. 뒷말로 붙이려고 앞에 공백이 하나 붙어 있어
+    // 그것만 떼고 한 줄로 찍는다.
+    const notice = sessionCutNotice(outcome).trim();
+    if (notice) console.log(notice);
     return;
   }
 
@@ -400,6 +448,26 @@ async function main(): Promise<void> {
     return;
   }
 
+  // 🔴 역할을 쓰는 시스템에 **역할 없이** 부여하지 않는다.
+  //
+  // 전에는 행을 넣고 나서 "⚠ 역할을 지정하지 않았습니다"만 찍었다. 그렇게 생긴
+  // 행은 관리 화면이 설명할 수 없는 상태였고(그 시스템의 역할 목록에 "역할
+  // 없음"이라는 줄이 없다), 고르개가 그 자리에 「권한 없음」을 보여주다가
+  // 관리자가 「적용」을 누르면 **멀쩡한 권한이 회수됐다.** 화면 쪽은 지금 그
+  // 상태를 제 이름으로 보여주도록 고쳤지만(client-access-values.ts), 애초에
+  // 만들지 않는 편이 낫다 — 받는 시스템도 role 클레임 없이 들어온 사람을
+  // 어떻게 다룰지 정해 두지 않았다.
+  //
+  // 역할을 쓰지 않는 시스템(available_roles가 빈 배열)은 그대로 role NULL로
+  // 넣는다. 그쪽에서는 그것이 정상이고 화면도 「권한 있음」이라고 부른다.
+  if (!roleArg && client.availableRoles.length > 0) {
+    console.error(`"${client.name}" 은(는) 역할을 쓰는 시스템입니다.`);
+    console.error("  역할 없이 부여할 수 없습니다 — 함께 지정하세요:");
+    console.error(`     --role <${client.availableRoles.join("|")}>`);
+    process.exitCode = 1;
+    return;
+  }
+
   const [inserted] = await db
     .insert(userClientGrants)
     .values({
@@ -427,12 +495,6 @@ async function main(): Promise<void> {
   console.log(
     `${target.displayName} 에게 "${client.name}" 접근 권한을 부여했습니다.${grantedRole}`
   );
-
-  if (!roleArg && client.availableRoles.length > 0) {
-    console.log("");
-    console.log("  ⚠ 역할을 지정하지 않았습니다. role 클레임 없이 들어갑니다.");
-    console.log(`     --role <${client.availableRoles.join("|")}> 로 지정하세요.`);
-  }
 
   if (!client.requiresGrant) {
     console.log("");
