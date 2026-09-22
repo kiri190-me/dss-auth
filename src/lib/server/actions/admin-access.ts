@@ -8,11 +8,16 @@ import {
   NO_ACCESS,
 } from "@/lib/auth/client-access-values";
 import { isMoveDirection, moveOneStep, renumber } from "@/lib/auth/client-order";
+import {
+  cutSessionsForRevokedGrant,
+  sessionCutNotice,
+} from "@/lib/auth/grant-revocation";
 import { assertPortalAdmin } from "@/lib/auth/portal-admin";
 import { db } from "@/lib/db/client";
 import { appendAuditLog } from "@/lib/db/mutations/audit";
 import { listClientsForAdmin } from "@/lib/db/queries/admin-access";
 import { clients, userClientGrants, users } from "@/lib/db/schema";
+import { sendLogoutNotice } from "@/lib/oidc/backchannel-logout";
 
 const ADMIN_USERS_PATH = "/admin/users";
 const APPS_PATH = "/apps";
@@ -76,6 +81,10 @@ export async function setClientAccess(formData: FormData) {
       clientId: clients.clientId,
       name: clients.name,
       availableRoles: clients.availableRoles,
+      // 아래 회수 갈래가 "그 시스템의 세션을 끊을지"를 판정하는 데 쓴다.
+      requiresGrant: clients.requiresGrant,
+      isActive: clients.isActive,
+      backchannelLogoutUri: clients.backchannelLogoutUri,
     })
     .from(clients)
     .where(eq(clients.id, clientRecordId))
@@ -124,12 +133,47 @@ export async function setClientAccess(formData: FormData) {
       clientId: client.clientId,
     });
 
-    done(`${target.displayName}님의 ${client.name} 권한을 회수했습니다.`);
+    // 🔴 여기까지는 "지금부터 못 들어온다"뿐이다. 이미 그 시스템에 들어가
+    // 있는 사람은 자기 세션이 만료될 때까지 계속 일할 수 있다 — 회수가 급한
+    // 것이었다면 그 몇 시간이 문제다(suspendUser의 그 주석과 같은 판단).
+    //
+    // 왜 그 시스템에만 보내고 포털 세션은 살려 두는지, 그리고 전 직원 공개
+    // 시스템을 왜 건너뛰는지는 grant-revocation.ts 머리말에 적어 두었다.
+    //
+    // 부여 행을 **지운 뒤에** 부른다. 순서를 뒤집으면 통보와 삭제 사이에 그
+    // 사람이 다시 로그인해 세션을 새로 만들 수 있다.
+    const outcome = await cutSessionsForRevokedGrant(
+      {
+        userId: target.id,
+        displayName: target.displayName,
+        actorUserId: actor.userId,
+        grantRecordId: existing.id,
+        client: {
+          clientId: client.clientId,
+          requiresGrant: client.requiresGrant,
+          isActive: client.isActive,
+          backchannelLogoutUri: client.backchannelLogoutUri,
+        },
+      },
+      { notifyLogout: sendLogoutNotice, audit: appendAuditLog }
+    );
+
+    done(
+      `${target.displayName}님의 ${client.name} 권한을 회수했습니다.` +
+        sessionCutNotice(outcome)
+    );
   }
 
   const nextRole = isRole ? value : null;
 
   // ───── 역할 변경 ─────
+  //
+  // 🔴 여기서는 세션을 끊지 않는다. 접근 권한은 그대로이고 바뀐 것은 역할뿐이라,
+  // 화면도 "다음 로그인부터 반영됩니다"라고 안내한다. 끊으면 역할 하나 고칠
+  // 때마다 그 사람이 일하던 화면에서 튕겨 나간다.
+  //
+  // ⚠️ 역할을 **낮추는** 것은 급한 일일 수 있다(최고관리자 → 일반). 그때는
+  // 권한을 회수해 세션을 끊고 다시 낮은 역할로 주는 것이 지금의 수단이다.
 
   if (existing) {
     if (existing.role === nextRole) {
@@ -160,6 +204,9 @@ export async function setClientAccess(formData: FormData) {
   }
 
   // ───── 새로 부여 ─────
+  //
+  // 🔴 여기서도 세션을 끊지 않는다. 방금 권한을 받은 사람을 로그아웃시키는
+  // 꼴이 되고, 그 사람은 아무 이유도 모른 채 다시 로그인한다.
 
   const [inserted] = await db
     .insert(userClientGrants)

@@ -87,6 +87,60 @@ async function notifyOne(target: Target, token: string): Promise<boolean> {
   }
 }
 
+/**
+ * 시스템 **하나**에만 로그아웃을 통보한다. 받았으면 true.
+ *
+ * 🔴 아래 notifyBackchannelLogout과 나눠 둔 이유가 둘이고, 둘 다 합칠 수 없는
+ * 종류다:
+ *
+ *  1. **대상 선정이 정반대다.** 아래 함수는 findTargets로 "그 사람이 들어갈 수
+ *     있는 시스템"을 찾는다. 시스템별 접근 권한을 회수한 직후에 부르는 쪽은
+ *     그 판정으로는 아무 곳도 찾지 못한다 — 회수한 시스템은 바로 그 목록에서
+ *     방금 빠진 곳이기 때문이다. 같은 함수에 스위치를 하나 더 다는 대신
+ *     "보낼 곳을 부르는 쪽이 정한다"로 갈라 둔다.
+ *  2. **sid를 싣지 않는다.** 권한 회수는 브라우저 하나가 아니라 "그 사람이 그
+ *     시스템에서 갖는 세션 전부"를 끝내는 일이다. 규격도 sub 하나만으로 된다고
+ *     한다(Back-Channel Logout 1.0 §2.4).
+ *
+ * 정지·로그아웃이 쓰는 아래 함수의 동작은 건드리지 않는다. 그쪽은 "전부
+ * 끊기"가 맞다.
+ */
+export async function sendLogoutNotice(params: {
+  userId: string;
+  /** 받는 시스템의 공개 client_id. 로그아웃 토큰의 aud가 된다. */
+  clientId: string;
+  /** clients.backchannelLogoutUri 그대로. {lan}은 여기서 펼친다. */
+  logoutUri: string;
+}): Promise<boolean> {
+  let token: string;
+  try {
+    token = await signLogoutToken({
+      audience: params.clientId,
+      subject: params.userId,
+    });
+  } catch (error) {
+    console.error(`[backchannel] 토큰 서명 실패 (${params.clientId}):`, error);
+    return false;
+  }
+
+  const ok = await notifyOne(
+    {
+      clientId: params.clientId,
+      // findTargets와 같은 이유로 펼친다 — 빼먹으면 주소가 바뀐 뒤 통보만
+      // 조용히 실패한다.
+      uri: expandLanPlaceholderToPrimary(params.logoutUri),
+    },
+    token
+  );
+
+  if (!ok) {
+    console.error(
+      `[backchannel] 로그아웃 통보 실패: ${params.clientId} — 그쪽 세션은 만료될 때까지 살아 있습니다.`
+    );
+  }
+  return ok;
+}
+
 export async function notifyBackchannelLogout(params: {
   userId: string;
   sessionId: string;

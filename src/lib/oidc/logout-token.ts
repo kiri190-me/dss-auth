@@ -39,14 +39,25 @@ export async function signLogoutToken(params: {
   audience: string;
   /** 끊긴 사람(dss-auth users.id). */
   subject: string;
-  /** 끊긴 SSO 세션 id. 받는 쪽이 세션 단위로 끊을 수 있으면 쓴다. */
-  sessionId: string;
+  /**
+   * 끊긴 SSO 세션 id. 받는 쪽이 세션 단위로 끊을 수 있으면 쓴다.
+   *
+   * **없이도 보낼 수 있다.** 규격은 sub와 sid 중 하나만 있어도 된다고 한다
+   * (Back-Channel Logout 1.0 §2.4). 지목할 세션이 없는 경우가 실제로 있다:
+   * 시스템별 접근 권한을 회수할 때는 브라우저 하나의 세션이 아니라 "그 사람이
+   * 그 시스템에서 갖는 세션 전부"를 끝내는 것이 뜻이다. 그때 아무 세션 id나
+   * 골라 실으면 받는 쪽이 그 하나만 끊어도 규격을 지킨 것이 되어, 나머지가
+   * 남는다.
+   */
+  sessionId?: string;
 }): Promise<string> {
   const { key, kid } = await getSigningKey();
   const now = Math.floor(Date.now() / 1000);
 
   return new SignJWT({
-    sid: params.sessionId,
+    // 없는 값을 undefined로 실으면 jose가 sid 키를 그대로 넣는다. 규격에 없는
+    // 꼴이라 까다로운 라이브러리가 거절할 수 있어, 아예 키를 빼 버린다.
+    ...(params.sessionId ? { sid: params.sessionId } : {}),
     events: { [LOGOUT_EVENT]: {} },
   })
     .setProtectedHeader({ alg: "RS256", kid })
