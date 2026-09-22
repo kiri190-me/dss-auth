@@ -8,8 +8,11 @@ import type {
 } from "@/lib/notifications/settings";
 import {
   KIND_MARKER_FIELD,
+  ROLES_LOCKED_FIELD,
+  type ShownKindState,
   enabledFieldName,
   receivesFieldName,
+  shownKindState,
 } from "@/lib/notifications/settings-form";
 import { saveSystemNotificationSettings } from "@/lib/server/actions/notification-settings";
 
@@ -36,6 +39,21 @@ export const metadata: Metadata = { title: "알림 설정 | DSS 통합 로그인
  * 누르고, 「되돌리기」는 브라우저의 폼 초기화가 그대로 해 준다. 무엇이 바뀌었나를
  * 세는 일만 서버로 옮겼다(notifications/settings-form.ts).
  *
+ * ── 「전부 기본값으로」도 자바스크립트 없이 ───────────────────────────────
+ * A/S 화면에 있던 단추다(2026-09-22, 그 탭을 걷어내기 전에 옮겼다). 브라우저
+ * 쪽에서 값을 갈아 끼우는 대신 **주소에 표시를 하나 달아 서버가 같은 표를 기본값
+ * 으로 다시 그린다**(`?defaults=<clientId>`). 그래서 이것은 단추가 아니라 링크다.
+ *
+ * 🔴 A/S 와 뜻이 같다 — **화면만 기본값으로 돌리고 저장은 따로다.** 눌러도 아무
+ * 것도 저장되지 않고, 표가 기본값으로 다시 그려질 뿐이다. 그 표를 저장하면 저장
+ * 액션이 「지금 값」과 견줘 달라진 줄만 보낸다(server/actions 의 그 계산 그대로).
+ * 눌렀다가 마음이 바뀌면 저장하지 말고 돌아오면 된다.
+ *
+ * 다른 길도 있었다. (A) 「기본값으로 저장까지 하는 액션」은 한 번에 끝나지만
+ * **누르는 순간 저장돼** A/S 와 뜻이 달라진다(되돌릴 기회가 없다). (B) 이 표만
+ * "use client" 로 바꾸면 A/S 와 똑같아지지만 이 저장소에 없던 틀이 하나 생기고,
+ * 자바스크립트 없이 도는 성질을 이 화면만 잃는다. 링크 한 줄이 둘 다 피한다.
+ *
  * ── 알림이 없는 시스템은 아예 나오지 않는다 ───────────────────────────────
  * 계측기·개선요청·PO 에는 알림 자체가 없다. 그 시스템들을 「알림 없음」 줄로
  * 그리려면 포털이 「저기엔 알림이 없다」고 단언해야 하는데, 그 판단의 근거는
@@ -51,6 +69,28 @@ const BTN =
 const BTN_PLAIN =
   "border border-zinc-300 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900";
 const NOTE = "text-xs text-zinc-500";
+
+/** 이 화면의 주소. 저장 액션도 같은 곳으로 돌아온다. */
+const PATH = "/admin/notifications";
+
+/** 시스템 구역의 닻. 링크로 돌아왔을 때 그 표가 바로 보이게 한다. */
+function blockId(clientId: string): string {
+  return `system-${clientId}`;
+}
+
+function blockHref(clientId: string): string {
+  return `${PATH}#${encodeURIComponent(blockId(clientId))}`;
+}
+
+/**
+ * 「전부 기본값으로」의 주소. 🔴 **누른 시스템 하나만** 기본값으로 그린다 —
+ * 화면에 시스템이 여럿이라, 하나를 눌렀는데 옆 표까지 달라지면 무엇을 저장하는
+ * 것인지 알 수 없게 된다.
+ */
+function defaultsHref(clientId: string): string {
+  const id = encodeURIComponent(blockId(clientId));
+  return `${PATH}?defaults=${encodeURIComponent(clientId)}#${id}`;
+}
 
 /**
  * 기본값에서 벗어난 칸 표시. A/S 화면과 같은 장치이고, 뜻도 같다 — ▲ 는 기본보다
@@ -72,9 +112,11 @@ function DefaultMark({ on, isDefault }: { on: boolean; isDefault: boolean }) {
 function RoleCell({
   row,
   role,
+  shown,
 }: {
   row: PortalSettingsKind;
   role: PortalSettingsRole;
+  shown: ShownKindState;
 }) {
   // 그 시스템이 이 칸을 보내지 않았다. 체크박스를 그리면 「꺼짐」으로 읽히고,
   // 저장하면 없던 값을 만들어 내게 된다. 저장 쪽(settings-form.ts)과 **같은
@@ -89,20 +131,33 @@ function RoleCell({
     );
   }
 
+  // 화면에 그릴 값. 「전부 기본값으로」를 누른 뒤에는 기본값이다.
+  const checked = shown.roles[role.code];
+
   return (
     <td className="px-2 py-2 text-center">
       <input
         type="checkbox"
         name={receivesFieldName(row.kind, role.code)}
-        defaultChecked={cell.receives}
+        defaultChecked={checked}
         // 🔴 잠긴 칸은 보내지 않는다. 브라우저가 disabled 칸을 빼고 보내는 것이
         // 곧 「그대로 두라」가 된다(settings-form.ts 의 그 주석).
-        disabled={!role.editable}
+        //
+        // 🔴 잠그는 까닭이 둘이다. `!role.editable` 은 **그 역할이라서**(저쪽이
+        // 끌 수 없다고 보낸 줄), `shown.rolesLocked` 는 **사용을 껐기 때문**이다.
+        // 끈 종류의 역할을 고르면 무언가 달라졌다고 믿게 되지만 아무에게도 가지
+        // 않는다 — A/S 화면이 같은 자리를 같은 이유로 잠가 두었다.
+        disabled={!role.editable || shown.rolesLocked}
+        title={
+          shown.rolesLocked && role.editable
+            ? "사용이 꺼진 종류입니다. 사용을 켜고 저장하면 이 칸을 고칠 수 있습니다."
+            : undefined
+        }
         aria-label={`${row.label} — ${role.label}`}
         className="h-4 w-4 disabled:cursor-not-allowed disabled:opacity-30"
       />
       {role.editable ? (
-        <DefaultMark on={cell.receives} isDefault={cell.receives === cell.defaultReceives} />
+        <DefaultMark on={checked} isDefault={checked === cell.defaultReceives} />
       ) : (
         <span title="이 역할이 받는 알림은 끌 수 없습니다" className="mt-0.5 block text-[10px] text-zinc-400">
           고정
@@ -115,15 +170,35 @@ function RoleCell({
 /** 설정을 읽어 온 시스템 하나의 표. */
 function SystemTable({
   system,
+  showDefaults,
 }: {
   system: Extract<PortalSettingsSystem, { status: "ok" }>;
+  showDefaults: boolean;
 }) {
   if (system.kinds.length === 0) {
     return <p className={`mt-3 ${NOTE}`}>이 시스템이 내주는 알림 종류가 없습니다.</p>;
   }
 
+  const rows = system.kinds.map((row) => ({
+    row,
+    shown: shownKindState({ row, roles: system.roles, showDefaults }),
+  }));
+  const differentCount = rows.filter((entry) => entry.shown.differsFromStored).length;
+
   return (
-    <form action={saveSystemNotificationSettings} className="mt-3">
+    /*
+      🔴 key 가 붙은 까닭: 「전부 기본값으로」는 같은 화면을 **다른 초기값**으로
+      다시 그린다. 그런데 defaultChecked 는 말 그대로 처음 한 번뿐이라, 같은
+      <input> 이 그 자리에 그대로 남으면 화면의 체크는 옛 값인 채로 남는다 —
+      오류도 안 나고 표만 거짓말을 한다. 아래 링크를 <a> 로 둔 것(통째로 다시
+      불러온다)이 1차 방어이고, 누가 <Link> 로 바꿔도 조용히 깨지지 않도록 이
+      key 로 한 겹 더 둔다.
+    */
+    <form
+      key={showDefaults ? "defaults" : "stored"}
+      action={saveSystemNotificationSettings}
+      className="mt-3"
+    >
       <input type="hidden" name="clientId" value={system.clientId} />
 
       <div className="overflow-x-auto rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
@@ -156,8 +231,15 @@ function SystemTable({
             </tr>
           </thead>
           <tbody>
-            {system.kinds.map((row) => (
-              <tr key={row.kind} className="border-t border-zinc-200 align-top dark:border-zinc-800">
+            {rows.map(({ row, shown }) => (
+              <tr
+                key={row.kind}
+                className={`border-t border-zinc-200 align-top dark:border-zinc-800 ${
+                  // 저장을 누르면 바뀌는 줄. 지금은 「전부 기본값으로」를 누른
+                  // 뒤에만 생긴다 — 평소에는 화면 값이 곧 저장된 값이다.
+                  shown.differsFromStored ? "bg-blue-50/60 dark:bg-blue-950/20" : ""
+                }`}
+              >
                 <th scope="row" className="py-2 pr-3 text-left font-normal">
                   {/*
                     이 줄이 화면에 있었다는 표시. 없으면 저장 쪽이 그 종류를
@@ -165,6 +247,14 @@ function SystemTable({
                     읽지 않기 위한 것이다.
                   */}
                   <input type="hidden" name={KIND_MARKER_FIELD} value={row.kind} />
+                  {/*
+                    🔴 이 줄의 역할 칸이 잠긴 채 그려졌다는 표시. 잠긴 칸은 폼에
+                    실리지 않으므로, 이것이 없으면 저장 쪽이 「역할을 전부 껐다」로
+                    읽는다(settings-form.ts 머리말).
+                  */}
+                  {shown.rolesLocked ? (
+                    <input type="hidden" name={ROLES_LOCKED_FIELD} value={row.kind} />
+                  ) : null}
                   {/*
                     종류 이름도 접히지 않게 둔다. 머리 칸이 제 너비를 가져가면 이 칸이
                     좁아지는데, 그때 이름까지 여러 줄로 흩어지면 표를 훑을 수 없다.
@@ -201,12 +291,15 @@ function SystemTable({
                   <input
                     type="checkbox"
                     name={enabledFieldName(row.kind)}
-                    defaultChecked={row.enabled}
+                    defaultChecked={shown.enabled}
                     aria-label={`${row.label} 사용`}
                     className="h-4 w-4"
                   />
-                  <DefaultMark on={row.enabled} isDefault={row.enabled === row.defaultEnabled} />
-                  {row.enabled ? null : (
+                  <DefaultMark
+                    on={shown.enabled}
+                    isDefault={shown.enabled === row.defaultEnabled}
+                  />
+                  {shown.enabled ? null : (
                     <span className="mt-0.5 block text-[10px] text-amber-700 dark:text-amber-400">
                       아무에게도 안 감
                     </span>
@@ -214,7 +307,7 @@ function SystemTable({
                 </td>
 
                 {system.roles.map((role) => (
-                  <RoleCell key={role.code} row={row} role={role} />
+                  <RoleCell key={role.code} row={row} role={role} shown={shown} />
                 ))}
               </tr>
             ))}
@@ -226,8 +319,22 @@ function SystemTable({
         <span className="text-amber-600 dark:text-amber-400">▲</span> 기본값보다 넓게 준 칸,{" "}
         <span className="text-amber-600 dark:text-amber-400">▼</span> 기본값에서 뺀 칸입니다.
         「사용」을 끄는 것과 역할을 전부 지우는 것은 다릅니다 — 끈 종류는 역할 설정을
-        그대로 안고 기다리다가 다시 켜는 순간 돌아옵니다.
+        그대로 안고 기다리다가 다시 켜는 순간 돌아옵니다. 사용을 끈 종류는 역할 칸이
+        잠깁니다.
       </p>
+
+      {showDefaults ? (
+        <p
+          role="status"
+          className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300"
+        >
+          지금 이 표는 <strong className="font-medium">코드가 정한 기본값</strong>입니다.
+          아직 아무것도 저장되지 않았습니다 —{" "}
+          {differentCount === 0
+            ? "지금 저장된 값이 이미 기본값과 같습니다."
+            : `저장을 누르면 색이 들어온 ${differentCount}개 종류가 바뀝니다.`}
+        </p>
+      ) : null}
 
       <div className="mt-3 flex flex-wrap gap-2">
         <button
@@ -236,25 +343,62 @@ function SystemTable({
         >
           저장
         </button>
-        {/* 브라우저의 폼 초기화 — 저장하지 않은 편집을 불러온 값으로 되돌린다. */}
-        <button type="reset" className={`${BTN} ${BTN_PLAIN}`}>
-          되돌리기
-        </button>
+
+        {showDefaults ? (
+          // 기본값 표를 보고 있을 때는 폼 초기화가 「되돌리기」가 되지 못한다 —
+          // 이 화면의 처음 상태가 곧 기본값이라 눌러 봐야 제자리다. 그래서 저장된
+          // 값을 다시 받아 오는 링크로 바꾼다.
+          <a
+            href={blockHref(system.clientId)}
+            className={`${BTN} ${BTN_PLAIN} inline-block`}
+            title="저장된 값으로 돌아갑니다"
+          >
+            되돌리기
+          </a>
+        ) : (
+          /* 브라우저의 폼 초기화 — 저장하지 않은 편집을 불러온 값으로 되돌린다. */
+          <button type="reset" className={`${BTN} ${BTN_PLAIN}`}>
+            되돌리기
+          </button>
+        )}
+
+        {showDefaults ? null : (
+          /*
+            🔴 단추가 아니라 링크다. 이 화면을 기본값으로 **다시 그려 달라**는
+            요청이고 저장이 아니다(이 파일 머리말). 🔴 <Link> 로 바꾸지 마라 —
+            같은 <input> 이 남아 체크가 옛 값 그대로인 채 표만 거짓말을 한다.
+          */
+          <a
+            href={defaultsHref(system.clientId)}
+            className={`${BTN} ${BTN_PLAIN} inline-block`}
+            title="표를 기본값으로 다시 그립니다. 저장하지 않은 편집은 사라지고, 저장을 눌러야 실제로 바뀝니다."
+          >
+            전부 기본값으로
+          </a>
+        )}
       </div>
     </form>
   );
 }
 
 /** 한 시스템 구역. 🔴 셋 가운데 둘은 고장이 아니라 답이다. */
-function SystemBlock({ system }: { system: PortalSettingsSystem }) {
+function SystemBlock({
+  system,
+  showDefaults,
+}: {
+  system: PortalSettingsSystem;
+  showDefaults: boolean;
+}) {
   return (
-    <section className="mt-8">
+    <section id={blockId(system.clientId)} className="mt-8 scroll-mt-4">
       <h2 className="text-sm font-semibold">
         {system.name}
         <span className="ml-2 text-xs font-normal text-zinc-500">{system.clientId}</span>
       </h2>
 
-      {system.status === "ok" ? <SystemTable system={system} /> : null}
+      {system.status === "ok" ? (
+        <SystemTable system={system} showDefaults={showDefaults} />
+      ) : null}
 
       {system.status === "forbidden" ? (
         <div className="mt-3 rounded-lg border border-zinc-200 px-4 py-3 dark:border-zinc-800">
@@ -289,10 +433,13 @@ function SystemBlock({ system }: { system: PortalSettingsSystem }) {
 export default async function AdminNotificationsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ok?: string; error?: string }>;
+  searchParams: Promise<{ ok?: string; error?: string; defaults?: string }>;
 }) {
   const admin = await requirePortalAdmin();
-  const { ok, error } = await searchParams;
+  // 🔴 defaults 는 「이 시스템의 표를 기본값으로 그려 달라」는 표시일 뿐이다.
+  // 값이 무엇이든 아래에서 clientId 와 맞춰 볼 뿐이라, 모르는 값이 와도 아무
+  // 표도 달라지지 않는다.
+  const { ok, error, defaults } = await searchParams;
 
   // 🔴 던지지 않는다 — 한 곳이 죽어도 이 화면은 떠야 한다. 죽은 시스템은
   // status: "unavailable" 로 담겨 온다(notifications/service.ts).
@@ -335,7 +482,11 @@ export default async function AdminNotificationsPage({
         </p>
       ) : (
         overview.systems.map((system) => (
-          <SystemBlock key={system.clientId} system={system} />
+          <SystemBlock
+            key={system.clientId}
+            system={system}
+            showDefaults={defaults === system.clientId}
+          />
         ))
       )}
 
