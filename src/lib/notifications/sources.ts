@@ -12,8 +12,8 @@ import type { ClientTile } from "@/lib/db/queries/clients";
  *     같은 규칙). 판정이 두 벌이 되면 「타일에는 없는데 알림은 오는」 시스템이
  *     생기고, 그건 곧 접근 권한이 없는 시스템에 그 사람의 존재를 알리는 일이다.
  *
- *  2. **알림 통로를 가진 시스템** — 지금은 A/S 하나뿐이다. 계측기·개선요청·PO 에는
- *     알림이 아예 없다.
+ *  2. **알림 통로를 가진 시스템** — 지금은 A/S 와 휴가 관리 둘이다.
+ *     계측기·개선요청·PO 에는 알림이 아예 없다.
  *
  * ── 🔴 2번을 왜 표(schema)가 아니라 여기 상수로 두는가 ──────────────────────
  * `backchannel_logout_uri` 가 이미 같은 일을 칸 하나로 하고 있고, 그쪽이 결국
@@ -25,6 +25,12 @@ import type { ClientTile } from "@/lib/db/queries/clients";
  * 조각은 통로를 여는 것이 목적이라 그 승인 대기에 묶이지 않도록 상수로 둔다.
  * **시스템이 둘째로 붙는 날이 칸을 만드는 날이다** — 그때까지는 고칠 곳이
  * 이 파일 하나뿐이고, 한 줄짜리 표를 DB 에 만드는 값보다 싸다.
+ *
+ * 🔴 **2026-09-22, 그 둘째 시스템이 붙었다**(휴가 관리, `dss-leave`). 그런데도
+ * 칸으로 옮기지 않았다 — 사용자 결정이다. 까닭: 두 줄짜리 표를 위해 포털에
+ * 마이그레이션을 하나 더 쌓는 값이 아직 고칠 곳 하나보다 비싸다. 위 문장은
+ * 지운 것이 아니라 **미룬 것이다.** 셋째가 붙는 날, 또는 리버스 프록시로
+ * 하위 경로 배치를 하는 날(아래 ⚠️) 다시 꺼낸다.
  *
  * ── 주소는 여기 적지 않는다 ────────────────────────────────────────────────
  * 🔴 상수에 담는 것은 **경로**뿐이고, 호스트와 포트는 DB(`clients.launcher_url`)
@@ -55,6 +61,11 @@ export type NotificationSourcePaths = {
  */
 export const NOTIFICATION_SOURCE_PATHS: Readonly<Record<string, NotificationSourcePaths>> = {
   "rf-service-system": {
+    notifications: "/api/integration/notifications",
+    settings: "/api/integration/notification-settings",
+  },
+  /** 휴가 관리 — 「지금 내 차례인 휴가 결재」. 2026-09-22 붙었다. */
+  "dss-leave": {
     notifications: "/api/integration/notifications",
     settings: "/api/integration/notification-settings",
   },

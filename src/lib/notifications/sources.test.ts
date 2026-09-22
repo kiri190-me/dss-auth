@@ -34,6 +34,43 @@ test("알림 통로를 가진 시스템에만 묻는다", () => {
   );
 });
 
+test("🔴 휴가 관리(dss-leave)에도 묻는다 — 통로를 연 둘째 시스템이다", () => {
+  // 2026-09-22. 열쇠는 clients.client_id 이고, 그 값이 곧 토큰의 aud 가 된다 —
+  // 한 글자라도 다르면 휴가 쪽이 401 로 거절하고 증상은 「휴가 결재 알림이
+  // 안 온다」 하나뿐이다.
+  const { sources } = toNotificationSources([
+    tile({
+      clientId: "dss-leave",
+      name: "DSS 휴가 관리",
+      launcherUrl: "http://192.168.0.12:3700/",
+    }),
+  ]);
+  assert.deepEqual(
+    sources.map((source) => source.clientId),
+    ["dss-leave"]
+  );
+  assert.equal(
+    sources[0].notificationsUrl,
+    "http://192.168.0.12:3700/api/integration/notifications"
+  );
+  assert.equal(
+    sources[0].settingsUrl,
+    "http://192.168.0.12:3700/api/integration/notification-settings"
+  );
+});
+
+test("두 시스템이 다 오면 둘 다 묻는다 — 한쪽이 다른 쪽을 가리지 않는다", () => {
+  const { sources, skipped } = toNotificationSources([
+    tile(),
+    tile({ clientId: "dss-leave", name: "DSS 휴가 관리", launcherUrl: "http://192.168.0.12:3700/" }),
+  ]);
+  assert.deepEqual(
+    sources.map((source) => source.clientId),
+    ["rf-service-system", "dss-leave"]
+  );
+  assert.deepEqual(skipped, []);
+});
+
 test("🔴 접근 권한이 없어 목록에서 빠진 시스템에는 묻지 않는다", () => {
   // 판정은 listAccessibleClients 하나뿐이다. 이 함수는 clients 표를 보지
   // 않으므로 받지 않은 시스템을 만들어 낼 방법 자체가 없다.
@@ -105,15 +142,15 @@ test("알림이 없는 시스템은 skipped 에도 적지 않는다 — 빠지�
 });
 
 test("받은 차례를 지킨다 — sort_order 가 곧 종에 보일 차례다", () => {
-  // 지금은 알림 통로를 가진 시스템이 하나뿐이라 차례가 눈에 띄지 않는다.
-  // 둘째가 붙는 날을 위해 규칙만 못 박아 둔다.
+  // 알림이 없는 시스템은 사이에 끼어 있어도 차례를 흔들지 않는다.
   const two = toNotificationSources([
+    tile({ clientId: "dss-leave", name: "DSS 휴가 관리" }),
     tile({ clientId: "dss-meters" }),
     tile(),
   ]);
   assert.deepEqual(
     two.sources.map((source) => source.clientId),
-    ["rf-service-system"]
+    ["dss-leave", "rf-service-system"]
   );
 });
 
