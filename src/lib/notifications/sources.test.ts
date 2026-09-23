@@ -21,7 +21,7 @@ function tile(over: Partial<ClientTile> = {}): ClientTile {
 }
 
 test("알림 통로를 가진 시스템에만 묻는다", () => {
-  // 계측기·개선요청·PO 에는 알림이 없다. 물어 봐야 404 가 오고, 그 404 는
+  // 계측기·PO 에는 알림이 없다. 물어 봐야 404 가 오고, 그 404 는
   // 「죽었다」와 구별되지 않아 종이 이유 없이 빨개진다.
   const { sources } = toNotificationSources([
     tile(),
@@ -57,6 +57,66 @@ test("🔴 휴가 관리(dss-leave)에도 묻는다 — 통로를 연 둘째 시
     sources[0].settingsUrl,
     "http://192.168.0.12:3700/api/integration/notification-settings"
   );
+});
+
+test("🔴 개선요청(dss-improvements)에도 묻는다 — 통로를 연 셋째 시스템이다", () => {
+  // 2026-09-23. 열쇠는 clients.client_id 이고 그 값이 곧 토큰의 aud 가 된다 —
+  // 한 글자라도 다르면 개선요청 쪽이 401 로 거절하고, 증상은 「개선요청 알림이
+  // 안 온다」 하나뿐이다.
+  const { sources } = toNotificationSources([
+    tile({
+      clientId: "dss-improvements",
+      name: "DSS 개선요청",
+      launcherUrl: "http://192.168.0.12:3500/",
+    }),
+  ]);
+  assert.deepEqual(
+    sources.map((source) => source.clientId),
+    ["dss-improvements"]
+  );
+  assert.equal(
+    sources[0].notificationsUrl,
+    "http://192.168.0.12:3500/api/integration/notifications"
+  );
+  assert.equal(
+    sources[0].settingsUrl,
+    "http://192.168.0.12:3500/api/integration/notification-settings"
+  );
+});
+
+test("🔴 통로를 가진 시스템은 셋이고, 저마다 두 경로를 다 갖는다", () => {
+  // 하나라도 빠지면 타입이 막아 주지만, 「등록은 했는데 셋째를 빠뜨렸다」는
+  // 타입이 잡지 못한다. 개수를 여기서 못 박는다.
+  assert.deepEqual(Object.keys(NOTIFICATION_SOURCE_PATHS).sort(), [
+    "dss-improvements",
+    "dss-leave",
+    "rf-service-system",
+  ]);
+  for (const [clientId, paths] of Object.entries(NOTIFICATION_SOURCE_PATHS)) {
+    // 경로여야 한다 — origin 뒤에 그대로 이어 붙이므로 / 로 시작하지 않으면
+    // 엉뚱한 주소가 된다.
+    assert.ok(paths.notifications.startsWith("/"), `${clientId} notifications`);
+    assert.ok(paths.settings.startsWith("/"), `${clientId} settings`);
+    // 🔴 둘이 같으면 읽기 토큰으로 설정 통로를 두드리게 된다.
+    assert.notEqual(paths.notifications, paths.settings, clientId);
+  }
+});
+
+test("세 시스템이 다 오면 셋 다 묻는다", () => {
+  const { sources, skipped } = toNotificationSources([
+    tile(),
+    tile({ clientId: "dss-leave", name: "DSS 휴가 관리", launcherUrl: "http://192.168.0.12:3700/" }),
+    tile({
+      clientId: "dss-improvements",
+      name: "DSS 개선요청",
+      launcherUrl: "http://192.168.0.12:3500/",
+    }),
+  ]);
+  assert.deepEqual(
+    sources.map((source) => source.clientId),
+    ["rf-service-system", "dss-leave", "dss-improvements"]
+  );
+  assert.deepEqual(skipped, []);
 });
 
 test("두 시스템이 다 오면 둘 다 묻는다 — 한쪽이 다른 쪽을 가리지 않는다", () => {

@@ -73,6 +73,78 @@ export type PortalNotificationFeed = {
   degraded: boolean;
 };
 
+/**
+ * 이 시스템에 **아직 확인하지 않은 알림이 있는가.**
+ *
+ * 화면 안에 묻어 두면 갈래를 시험으로 돌려 볼 수 없어 여기 순수 함수로 둔다.
+ *
+ * 세 갈래가 모두 「없다」로 가지만 까닭이 다르다:
+ *
+ *  · **0건** — 밀린 일이 없다. 정상이다.
+ *  · **`ok: false`** — 🔴 **못 물어봤다.** 위 degraded 주석이 적은 대로 「없다」와
+ *    다른 말이지만, 타일에는 그 둘을 나눠 그릴 자리가 없다(점 하나뿐이다).
+ *    그럴 때는 **없는 것처럼 두는 편**이 낫다 — 못 물어본 것을 빨간 점으로
+ *    그리면 사람이 눌러 들어가 아무것도 없는 것을 보게 되고, 그 다음부터는
+ *    진짜 점도 믿지 않는다.
+ *  · **목록에 없다** — 알림 통로가 없는 시스템이다(계측기·PO). 물어본 적이
+ *    없으니 알 수 있는 것도 없다.
+ *
+ * 🔴 이 함수는 **`clientId` 로만 맞춘다** — 어느 시스템인지 아는 코드가 한 줄도
+ * 없다. 「점을 찍을 시스템인가」는 **다른 물음**이고, 아래 shouldShowTileDot 이
+ * 따로 답한다. 둘을 한 함수에 섞으면 이 이름이 거짓이 된다.
+ */
+export function hasUnreadFor(
+  sources: readonly PortalNotificationSourceStatus[],
+  clientId: string
+): boolean {
+  const status = sources.find((source) => source.clientId === clientId);
+  return status !== undefined && status.ok && status.count > 0;
+}
+
+/**
+ * 🔴 앱 런처 타일(`/apps`)에 **점을 보여 줄 시스템. 2026-09-23 사용자 결정**:
+ * 「빨간색 점은 개선요청에만 뜨면 돼.」
+ *
+ * 알림 통로를 가진 시스템은 셋이지만(A/S · 휴가 관리 · 개선요청) 점은 하나에만
+ * 찍는다. 🔴 **알림 자체는 셋 다 흐른다** — 종을 열면 A/S 와 휴가 알림도 그대로
+ * 보인다. 여기서 좁히는 것은 **포털 타일 위의 점**뿐이다. 그 둘은 다른 것이다.
+ *
+ * 🔴 **넓히려면 이 목록에 client_id 한 줄을 더하면 된다** — 다른 곳은 고칠 것이
+ * 없다. 화면에도 hasUnreadFor 에도 시스템 이름이 없다.
+ */
+const TILE_DOT_CLIENT_IDS: ReadonlySet<string> = new Set(["dss-improvements"]);
+
+/**
+ * 이 타일에 **빨간 점을 찍을 것인가.**
+ *
+ * 두 물음의 곱이다 — 「점을 찍을 시스템인가」(위 목록) × 「밀린 일이 있는가」
+ * (hasUnreadFor). 갈라 둔 까닭은 그 둘이 서로 다른 종류의 판단이기 때문이다:
+ * 앞은 **사용자가 정한 화면 취향**이라 말 한마디로 바뀌고, 뒤는 **받은 자료를
+ * 읽는 규칙**이라 바뀔 일이 거의 없다.
+ *
+ * ── 🔴 점이 사라지는 데 최대 30초가 걸린다 — 고장이 아니다 ────────────────
+ * 개선요청의 알림이 0건이 되면(= 그 사람이 화면에 들어가 다 확인하면) 이 함수는
+ * 곧바로 false 를 낸다. 그런데 **화면에서 점이 사라지기까지는 최대 30초가
+ * 걸린다.** 이 함수가 늦는 것이 아니라, 먹이는 `sources` 가 옛 것이기 때문이다 —
+ * 포털은 각 시스템에서 받아 온 답을 `FEED_TTL_MS`(service.ts, 30초) 동안 기억
+ * 하고 그동안 다시 묻지 않는다. 🔴 **새로고침해도 30초 안에는 그대로다.**
+ * 여기서 고칠 것이 없다.
+ *
+ * 🔴 **2026-09-23, 그 지연을 그대로 두기로 했다(사용자 결정: 「30초로 하자」).**
+ * 까닭 둘: ① 통합 로그인 화면은 자주 보는 곳이 아니라 확인한 뒤 30초 안에 다시
+ * 볼 일이 드물다. ② 없애려면 개선요청이 포털에 「기억해 둔 것을 버려라」를
+ * 알리는 **새 통로**가 있어야 하는데, 그러면 **개선요청이 포털 주소를 알아야
+ * 해서 묶임이 하나 는다**(지금은 포털만 저쪽 주소를 안다). 자세한 셈은
+ * service.ts 의 FEED_TTL_MS 곁에 적어 두었다.
+ */
+export function shouldShowTileDot(
+  sources: readonly PortalNotificationSourceStatus[],
+  clientId: string
+): boolean {
+  if (!TILE_DOT_CLIENT_IDS.has(clientId)) return false;
+  return hasUnreadFor(sources, clientId);
+}
+
 /** 한 시스템이 내준 목록(우리가 훑고 난 뒤). */
 export type SourceFeed = {
   items: PortalNotificationItem[];

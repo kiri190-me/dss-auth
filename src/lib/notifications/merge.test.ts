@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   MAX_ITEMS_PER_SOURCE,
+  hasUnreadFor,
   mergeSourceOutcomes,
   parseSourceFeed,
+  shouldShowTileDot,
+  type PortalNotificationSourceStatus,
   type SourceOutcome,
 } from "./merge";
 import type { NotificationSource } from "./sources";
@@ -205,4 +208,75 @@ test("물어본 곳이 모두 죽어도 터지지 않는다", () => {
 test("물어볼 곳이 없으면 degraded 가 아니다", () => {
   const merged = mergeSourceOutcomes([]);
   assert.deepEqual(merged, { items: [], count: 0, sources: [], degraded: false });
+});
+
+/* ── 앱 런처 타일의 빨간 점을 켤지 정하는 규칙 ───────────────────────────── */
+
+/** merge 가 내주는 시스템별 상태 한 줄. */
+function status(over: Partial<PortalNotificationSourceStatus> = {}): PortalNotificationSourceStatus {
+  return { clientId: "dss-improvements", name: "개선요청", ok: true, count: 3, ...over };
+}
+
+test("밀린 일이 있으면 점을 켠다", () => {
+  assert.equal(hasUnreadFor([status()], "dss-improvements"), true);
+  assert.equal(shouldShowTileDot([status()], "dss-improvements"), true);
+});
+
+test("🔴 0건이면 점을 켜지 않는다 — 없는 것이 정상이다", () => {
+  assert.equal(hasUnreadFor([status({ count: 0 })], "dss-improvements"), false);
+  assert.equal(shouldShowTileDot([status({ count: 0 })], "dss-improvements"), false);
+});
+
+test("🔴 못 물어본 시스템에는 점을 켜지 않는다 — 「없다」와 다른 말이지만 거짓 점보다 낫다", () => {
+  // ok:false 는 사고다. 그런데 타일에는 그 둘을 나눠 그릴 자리가 없고,
+  // 눌러 들어가 아무것도 없는 것을 본 사람은 그 다음부터 진짜 점도 믿지 않는다.
+  assert.equal(hasUnreadFor([status({ ok: false, count: 0 })], "dss-improvements"), false);
+  assert.equal(shouldShowTileDot([status({ ok: false, count: 0 })], "dss-improvements"), false);
+  // 저쪽이 개수를 실어 보냈더라도 못 물어본 것은 못 물어본 것이다.
+  assert.equal(hasUnreadFor([status({ ok: false, count: 9 })], "dss-improvements"), false);
+  assert.equal(shouldShowTileDot([status({ ok: false, count: 9 })], "dss-improvements"), false);
+});
+
+test("🔴 알림 통로가 없는 시스템에는 점이 아예 없다 — 목록에 들어오지 않는다", () => {
+  // 계측기·PO 는 sources 에 오지 않는다. find 가 undefined 이고 그것이 정답이다.
+  assert.equal(hasUnreadFor([status()], "dss-meters"), false);
+  assert.equal(hasUnreadFor([], "dss-improvements"), false);
+  assert.equal(shouldShowTileDot([], "dss-improvements"), false);
+});
+
+test("🔴 점은 개선요청에만 찍는다 — A/S 에 밀린 일이 있어도 안 찍는다(2026-09-23 사용자 결정)", () => {
+  // 🔴 뜻이 뒤집힌 시험이다. 처음에는 「개선요청 전용 코드가 아니다 — 통로를
+  // 여는 시스템이 늘면 그 타일의 점도 저절로 켜진다」를 재고 있었는데,
+  // 2026-09-23 사용자가 범위를 좁혔다: 「빨간색 점은 개선요청에만 뜨면 돼.」
+  //
+  // 🔴 **알림이 막힌 것이 아니다.** A/S·휴가 알림은 종을 열면 그대로 보인다.
+  // 좁아진 것은 포털 타일 위의 점뿐이다(merge.ts 의 TILE_DOT_CLIENT_IDS).
+  const sources = [
+    status({ clientId: "rf-service-system", name: "DSS A/S 관리 시스템", count: 2 }),
+    status({ clientId: "dss-leave", name: "DSS 휴가 관리", count: 5 }),
+    status({ clientId: "dss-improvements", count: 1 }),
+  ];
+
+  // 화면이 묻는 물음 — 점을 찍는 곳은 개선요청 하나뿐이다.
+  assert.equal(shouldShowTileDot(sources, "dss-improvements"), true);
+  assert.equal(shouldShowTileDot(sources, "rf-service-system"), false);
+  assert.equal(shouldShowTileDot(sources, "dss-leave"), false);
+
+  // 🔴 그런데 hasUnreadFor **자체는 여전히 clientId 로만 고른다.** 걸러 내는
+  // 일은 그 위의 한 겹이 한다 — 두 물음을 한 함수에 섞지 않았다는 못이다.
+  // 목록에 한 줄을 더하는 것만으로 다시 넓어져야 한다.
+  assert.equal(hasUnreadFor(sources, "rf-service-system"), true);
+  assert.equal(hasUnreadFor(sources, "dss-leave"), true);
+  assert.equal(hasUnreadFor(sources, "dss-improvements"), true);
+});
+
+test("합친 결과를 그대로 먹인다 — 타일이 보는 것은 merge 가 내준 sources 다", () => {
+  const merged = mergeSourceOutcomes([
+    { source: AS, ok: true, feed: { items: [], count: 0 } },
+    { source: METERS, ok: false },
+  ] satisfies SourceOutcome[]);
+  assert.equal(hasUnreadFor(merged.sources, "rf-service-system"), false);
+  assert.equal(hasUnreadFor(merged.sources, "dss-meters"), false);
+  assert.equal(shouldShowTileDot(merged.sources, "rf-service-system"), false);
+  assert.equal(shouldShowTileDot(merged.sources, "dss-meters"), false);
 });
