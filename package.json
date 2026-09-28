@@ -1,6 +1,6 @@
 {
   "name": "dss-auth",
-  "version": "1.4",
+  "version": "1.5",
   "private": true,
   "scripts": {
     "dev": "next dev --webpack --port 3100",
