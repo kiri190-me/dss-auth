@@ -76,7 +76,16 @@ test("화면에 보이는 번호는 통합 로그인 항목 가운데 맨 앞의
 });
 
 test("항목마다 시스템이 적혀 있다", () => {
-  const known: ReleaseSystem[] = ["통합 로그인", "A/S 관리", "계측기 관리"];
+  // 2026-09-28: 개선요청 · PO / 내자의 자리를 더했다. 아직 두 시스템의 글은
+  // 하나도 없지만(배포하는 날 붙인다), 여기 목록이 좁으면 그날 이 시험이
+  // 애먼 곳에서 걸린다.
+  const known: ReleaseSystem[] = [
+    "통합 로그인",
+    "A/S 관리",
+    "계측기 관리",
+    "개선요청",
+    "PO / 내자",
+  ];
   for (const release of RELEASES) {
     assert.ok(known.includes(release.system), `모르는 시스템: ${release.system}`);
   }
