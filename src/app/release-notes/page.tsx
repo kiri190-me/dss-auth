@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { formatReleaseDate } from "@/lib/format";
-import { APP_VERSION, RELEASES, type ReleaseKind, type ReleaseSystem } from "@/lib/release-notes";
+import {
+  APP_VERSION,
+  FOLDER_HELPER_NOTICE,
+  RELEASES,
+  type ReleaseKind,
+  type ReleaseSystem,
+} from "@/lib/release-notes";
 
 export const metadata: Metadata = {
   title: "업데이트 소식 | DSS 통합 로그인",
@@ -58,6 +64,58 @@ export default function ReleaseNotesPage() {
           입니다.
         </p>
       </header>
+
+      {/*
+        🔴 **소식 목록보다 위에, 늘 여기 있는 칸**(2026-10-12 사용자 결정).
+        소식 글 하나로 넣으면 다음 배포에 밀려 내려간다 — 까닭과 문구는
+        release-notes.ts 의 FOLDER_HELPER_NOTICE 머리말에 있다.
+
+        🔴 단추는 포털 제 화면(`/apps`)으로만 간다. 이 화면은 로그인 없이도
+        열리므로 사내 주소를 그리지 않는다. 설치 명령을 만드는 쪽은 그대로 A/S 다.
+      */}
+      <details className="mt-8 rounded-xl border border-zinc-200 p-5 dark:border-zinc-800">
+        {/*
+          🔴 접기는 `<details>` 다 — 자바스크립트가 한 줄도 들어가지 않는다. 이 저장소에는
+          `"use client"` 가 한 곳도 없고(apps/page.tsx 의 그 주석), 접기 하나 때문에 그 틀을
+          들일 일이 아니다. 같은 까닭으로 admin 화면들이 이미 `<details>` 를 쓴다.
+
+          🔴 **처음은 접힌 채다**(`open` 이 없다 — 사용자 결정 2026-10-12: 「기본적으로는
+          접혀져 있도록」). 한 번 설치하면 다시 볼 일이 없는 글이라, 펴 둔 채로는 소식을
+          읽으러 온 사람 모두의 화면 맨 위를 차지한다.
+
+          🔴 그래서 `<summary>` 에 **제목과 한 줄 설명을 함께** 둔다. 접힌 상태에서 제목만
+          덩그러니 있으면 안에 무엇이 있는지 몰라 아무도 펴 보지 않는다 — 그러면 이 칸을
+          최상단에 세운 까닭이 사라진다. 🔴 한 줄로 끝낸다(release-notes.ts 의 `summary`).
+
+          🔴 접은 상태는 **기억하지 않는다**(기억시키려면 localStorage → 클라이언트 조각).
+          기본이 접힘이 된 지금은 기억할 것도 거의 없다 — 기억의 쓸모는 「접어 둔 것이
+          다시 펴지지 않게」인데, 애초에 펴지지 않는다.
+
+          제목은 접혀도 **늘 보인다** — 자리도 그대로 최상단이라 「상시 노출」이 산다.
+        */}
+        <summary className="cursor-pointer">
+          <h2 className="inline text-sm font-semibold">
+            {FOLDER_HELPER_NOTICE.title}
+          </h2>
+          <span className="ml-2 text-xs text-zinc-500 dark:text-zinc-400">
+            {FOLDER_HELPER_NOTICE.summary}
+          </span>
+        </summary>
+        {FOLDER_HELPER_NOTICE.body.map((paragraph) => (
+          <p
+            key={paragraph}
+            className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400"
+          >
+            {paragraph}
+          </p>
+        ))}
+        <Link
+          href={FOLDER_HELPER_NOTICE.linkHref}
+          className="mt-4 inline-block rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:border-zinc-900 dark:border-zinc-700 dark:hover:border-zinc-400"
+        >
+          {FOLDER_HELPER_NOTICE.linkText}
+        </Link>
+      </details>
 
       <ol className="mt-10 space-y-8">
         {RELEASES.map((release) => (
