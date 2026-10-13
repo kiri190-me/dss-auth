@@ -121,6 +121,22 @@ export const NOTIFICATION_SOURCE_PATHS: Readonly<Record<string, NotificationSour
     notifications: "/api/integration/notifications",
     settings: "/api/integration/notification-settings",
   },
+  /**
+   * 재고 관리 — 「반출 확인 대기」와 「내 신청이 반려됨」. 2026-10-13 붙었다(다섯째).
+   *
+   * 🔴 **개수로 이 결정을 다시 꺼내지 않는다**(위 「다섯째를 붙이는 사람에게」). 다섯이
+   * 된 지금도 세 조건은 하나도 사실이 아니다 — 다섯이 **같은 두 경로**를 쓰고, 하위
+   * 경로 배치는 아직 없으며, 포털은 그대로 다시 배포할 수 있다. 그래서 상수에 한 줄을
+   * 더한다.
+   *
+   * 🔴 「확인 대기」는 재고 담당(ADMIN)에게만, 「반려」는 그 신청을 낸 본인에게만 가지만
+   * **그 판정은 저쪽이 한다.** 포털은 역할도 누가 신청했는지도 보지 않는다. 반려 알림이
+   * 7일 뒤 사라지는 것도 저쪽 규칙이다(그쪽 notifications/bell-items.ts).
+   */
+  "dss-inventory": {
+    notifications: "/api/integration/notifications",
+    settings: "/api/integration/notification-settings",
+  },
 };
 
 /** 물어볼 곳 하나. */

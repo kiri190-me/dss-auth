@@ -84,12 +84,38 @@ test("🔴 개선요청(dss-improvements)에도 묻는다 — 통로를 연 셋�
   );
 });
 
-test("🔴 통로를 가진 시스템은 넷이고, 저마다 두 경로를 다 갖는다", () => {
-  // 하나라도 빠지면 타입이 막아 주지만, 「등록은 했는데 셋째를 빠뜨렸다」는
+test("🔴 재고 관리(dss-inventory)에도 묻는다 — 통로를 연 다섯째 시스템이다", () => {
+  // 2026-10-13. 열쇠는 clients.client_id 이고 그 값이 곧 토큰의 aud 가 된다 —
+  // 한 글자라도 다르면 재고 쪽이 401 로 거절하고, 증상은 「재고 알림이 안 온다」
+  // 하나뿐이다. 🔴 이 목록에 없으면 **부르러 가지도 않아** 로그조차 남지 않는다.
+  const { sources } = toNotificationSources([
+    tile({
+      clientId: "dss-inventory",
+      name: "DSS 재고 관리",
+      launcherUrl: "http://192.168.0.12:3800/",
+    }),
+  ]);
+  assert.deepEqual(
+    sources.map((source) => source.clientId),
+    ["dss-inventory"]
+  );
+  assert.equal(
+    sources[0].notificationsUrl,
+    "http://192.168.0.12:3800/api/integration/notifications"
+  );
+  assert.equal(
+    sources[0].settingsUrl,
+    "http://192.168.0.12:3800/api/integration/notification-settings"
+  );
+});
+
+test("🔴 통로를 가진 시스템은 다섯이고, 저마다 두 경로를 다 갖는다", () => {
+  // 하나라도 빠지면 타입이 막아 주지만, 「등록은 했는데 다섯째를 빠뜨렸다」는
   // 타입이 잡지 못한다. 개수를 여기서 못 박는다.
   assert.deepEqual(Object.keys(NOTIFICATION_SOURCE_PATHS).sort(), [
     "dss-board",
     "dss-improvements",
+    "dss-inventory",
     "dss-leave",
     "rf-service-system",
   ]);
