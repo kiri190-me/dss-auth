@@ -84,10 +84,11 @@ test("🔴 개선요청(dss-improvements)에도 묻는다 — 통로를 연 셋�
   );
 });
 
-test("🔴 통로를 가진 시스템은 셋이고, 저마다 두 경로를 다 갖는다", () => {
+test("🔴 통로를 가진 시스템은 넷이고, 저마다 두 경로를 다 갖는다", () => {
   // 하나라도 빠지면 타입이 막아 주지만, 「등록은 했는데 셋째를 빠뜨렸다」는
   // 타입이 잡지 못한다. 개수를 여기서 못 박는다.
   assert.deepEqual(Object.keys(NOTIFICATION_SOURCE_PATHS).sort(), [
+    "dss-board",
     "dss-improvements",
     "dss-leave",
     "rf-service-system",
