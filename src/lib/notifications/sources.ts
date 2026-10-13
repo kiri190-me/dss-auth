@@ -110,10 +110,10 @@ export const NOTIFICATION_SOURCE_PATHS: Readonly<Record<string, NotificationSour
     settings: "/api/integration/notification-settings",
   },
   /**
-   * 사내 게시판 — 「아직 안 읽은 공지」. 2026-10-13 붙었다(넷째).
+   * 사내 게시판 — 「아직 안 읽은 필독·공지」. 2026-10-13 붙었다(넷째).
    *
-   * 🔴 공지를 **쓴 사람 자신에게는 가지 않지만 그 판정은 저쪽이 한다.** 포털은
-   * 누가 썼는지 보지 않고, 게시판 쪽이 자기가 쓴 공지를 목록에서 뺀다
+   * 🔴 필독·공지를 **쓴 사람 자신에게는 가지 않지만 그 판정은 저쪽이 한다.** 포털은
+   * 누가 썼는지 보지 않고, 게시판 쪽이 자기가 쓴 필독·공지를 목록에서 뺀다
    * (그쪽 notifications/queries.ts 의 조건 3번). 글을 열면 사라지는 것도 저쪽
    * 규칙이다.
    */
