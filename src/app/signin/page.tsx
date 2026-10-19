@@ -62,7 +62,7 @@ export default async function SignInPage({
         <DssLogo />
         <h1 className="mt-4 text-2xl font-bold tracking-tight">DSS</h1>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          사내 시스템 통합 로그인
+          DSS 시스템 통합 로그인
         </p>
       </div>
 

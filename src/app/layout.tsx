@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "DSS 통합 로그인",
-  description: "DSS 사내 시스템 통합 로그인 포털",
+  description: "DSS 시스템 통합 로그인 포털",
   // 홈 화면 설치용(app/manifest.ts가 만드는 경로). 안드로이드·데스크톱
   // Chrome이 이 manifest의 display 값을 보고 주소창 없는 창으로 띄운다.
   manifest: "/manifest.webmanifest",

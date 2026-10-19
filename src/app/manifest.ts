@@ -28,7 +28,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "DSS 통합 로그인",
     short_name: "DSS 로그인",
-    description: "DSS 사내 시스템 통합 로그인 포털",
+    description: "DSS 시스템 통합 로그인 포털",
     lang: "ko",
     start_url: "/",
     scope: "/",

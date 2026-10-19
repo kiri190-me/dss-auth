@@ -57,7 +57,7 @@ export default function ReleaseNotesPage() {
       <header>
         <h1 className="text-xl font-semibold">업데이트 소식</h1>
         <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-          사내 시스템이 바뀔 때마다 여기에 적습니다. 지금 보고 계신 로그인 화면은{" "}
+          DSS 시스템이 바뀔 때마다 여기에 적습니다. 지금 보고 계신 로그인 화면은{" "}
           <span className="font-medium text-zinc-900 dark:text-zinc-100">
             v{APP_VERSION}
           </span>{" "}

@@ -23,7 +23,7 @@ export default async function PendingPage() {
         </strong>
         님의 계정이 등록되었습니다.
         <br />
-        관리자가 확인하면 사내 시스템에 접속할 수 있습니다.
+        관리자가 확인하면 DSS 시스템에 접속할 수 있습니다.
       </p>
       <p className="mt-6 rounded-lg bg-zinc-100 px-4 py-3 text-xs leading-relaxed text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
         승인이 늦어지면 담당자에게 직접 문의해 주세요.
