@@ -26,13 +26,14 @@ import {
   accessTokens,
   auditLogs,
   authorizationCodes,
+  notificationDismissals,
   ssoSessions,
 } from "../src/lib/db/schema";
 
 const dryRun = process.argv.includes("--dry-run");
 
 /**
- * 기준 시각을 한 번만 구해 네 표에 똑같이 쓴다. 표마다 now()를 다시 부르면
+ * 기준 시각을 한 번만 구해 다섯 표에 똑같이 쓴다. 표마다 now()를 다시 부르면
  * 한 번의 실행이 여러 기준 시각을 갖게 되어, 경계에 걸친 행이 이번에
  * 지워졌는지 다음에 지워질지 설명할 수 없게 된다.
  */
@@ -138,6 +139,38 @@ const sweeps: Sweep[] = [
       return deleted.length;
     },
   },
+  {
+    label: "notification_dismissals",
+    keeps: "지운 뒤 하루",
+    // 위의 넷과 달리 이 표의 본래 길은 보관 기간이 아니다 — 로그아웃 라우트
+    // 두 곳이 그 사람 기록을 비운다. 여기서 걷는 것은 로그아웃 단추를 안 누르고
+    // 창을 닫아 아무 훅도 안 돈 경우뿐이라, 평소에는 0건으로 지나간다.
+    // 하루인 근거는 src/lib/db/retention.ts에 있다.
+    count: async () => {
+      const [row] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(notificationDismissals)
+        .where(
+          lt(
+            notificationDismissals.dismissedAt,
+            cutoff.notificationDismissals
+          )
+        );
+      return row?.n ?? 0;
+    },
+    purge: async () => {
+      const deleted = await db
+        .delete(notificationDismissals)
+        .where(
+          lt(
+            notificationDismissals.dismissedAt,
+            cutoff.notificationDismissals
+          )
+        )
+        .returning({ id: notificationDismissals.id });
+      return deleted.length;
+    },
+  },
 ];
 
 async function main() {
@@ -152,7 +185,9 @@ async function main() {
     const n = dryRun ? await sweep.count() : await sweep.purge();
     total += n;
     const verb = dryRun ? "지울 수 있음" : "지웠습니다";
-    console.log(`  ${sweep.label.padEnd(21)} ${String(n).padStart(6)}건 ${verb}  (${sweep.keeps})`);
+    // 폭은 가장 긴 표 이름(notification_dismissals, 23자)에 두 칸을 더한 값이다.
+    // 모자라면 그 줄만 건수 자리가 밀려 표가 어긋난다.
+    console.log(`  ${sweep.label.padEnd(25)} ${String(n).padStart(6)}건 ${verb}  (${sweep.keeps})`);
   }
 
   console.log("");

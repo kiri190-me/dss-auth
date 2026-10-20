@@ -4,6 +4,7 @@ import {
   ACCESS_TOKEN_RETENTION_DAYS,
   AUDIT_LOG_RETENTION_DAYS,
   AUTHORIZATION_CODE_RETENTION_DAYS,
+  NOTIFICATION_DISMISSAL_RETENTION_DAYS,
   retentionCutoffs,
   SSO_SESSION_RETENTION_DAYS,
 } from "./retention";
@@ -57,6 +58,43 @@ test("모든 기준 시각이 지금보다 과거다", () => {
   for (const [name, cutoff] of Object.entries(retentionCutoffs(NOW))) {
     assert.ok(cutoff.getTime() < NOW.getTime(), name);
   }
+});
+
+test("알림 지움 표시의 경계가 기준 시각의 하루 전이다", () => {
+  assert.equal(NOTIFICATION_DISMISSAL_RETENTION_DAYS, 1);
+  assert.equal(
+    retentionCutoffs(NOW).notificationDismissals.getTime(),
+    NOW.getTime() - NOTIFICATION_DISMISSAL_RETENTION_DAYS * DAY_MS
+  );
+});
+
+test("지움 표시가 다섯 중 가장 짧게 남는다", () => {
+  // 나머지 넷은 나중에 조사하려고 남기는 기록이라 길수록 안전하지만, 지움은
+  // 조사할 것이 없는 임시 표시다. 이 값이 다른 것만큼 길어지면 「숨겨도 하루
+  // 안에 저절로 돌아온다」가 거짓이 된다 — 쓰기 통로가 사칭 위험을 받아들인
+  // 근거가 그 한 문장이었다(설계안 5절 ③).
+  for (const other of [
+    AUTHORIZATION_CODE_RETENTION_DAYS,
+    ACCESS_TOKEN_RETENTION_DAYS,
+    SSO_SESSION_RETENTION_DAYS,
+    AUDIT_LOG_RETENTION_DAYS,
+  ]) {
+    assert.ok(NOTIFICATION_DISMISSAL_RETENTION_DAYS < other);
+  }
+});
+
+test("포털 세션의 절대 만료(12시간)보다는 길다", () => {
+  // 세션이 아직 살아 있는데 표시가 먼저 걷히면 「안 지웠는데 다시 뜬다」가
+  // 된다. 그래서 아래로는 12시간이 바닥이다.
+  //
+  // 12시간을 여기 적어 둔 까닭: 원본인 session/sso-session.ts의
+  // SSO_SESSION_MAX_AGE_SECONDS는 server-only 파일이라 이 테스트에서 불러올 수
+  // 없다. 값이 바뀌면 이 줄이 따라오지 않으므로, 세션 수명을 늘리는 사람이
+  // 보도록 그 파일 쪽에도 보관 기간을 가리키는 말을 남겨 두는 편이 좋다.
+  const SSO_SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+  assert.ok(
+    NOTIFICATION_DISMISSAL_RETENTION_DAYS * DAY_MS > SSO_SESSION_MAX_AGE_MS
+  );
 });
 
 test("기준 시각이 바뀌면 잘라내는 지점도 함께 움직인다", () => {

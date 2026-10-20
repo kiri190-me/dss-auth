@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { decodeJwt } from "jose";
 import { allowHttpRedirectUris, secureCookiesEnabled } from "@/lib/config/env";
 import { appendAuditLog } from "@/lib/db/mutations/audit";
+import { clearDismissals } from "@/lib/db/mutations/notification-dismissals";
 import { notifyBackchannelLogout } from "@/lib/oidc/backchannel-logout";
 import { getActiveClient } from "@/lib/db/queries/oidc-clients";
 import { clientIp, redirectTo } from "@/lib/http/redirect";
@@ -81,6 +82,31 @@ export async function GET(request: NextRequest) {
       sourceIp: clientIp(request),
       userAgent: request.headers.get("user-agent"),
     });
+
+    // 지운 알림 표시를 비운다. 「로그아웃하면 지운 알림이 다시 뜬다」가
+    // 브라우저에 적던 시절의 동작이었고, 포털로 모으면서도 그 뜻을 그대로
+    // 지킨다(설계안 3-6).
+    //
+    // 자리를 여기로 잡은 까닭 — **되돌아오지 못할 쪽을 먼저 한다.** 위의 세션
+    // 폐기는 대신해 줄 것이 없지만, 지움 정리는 못 해도 하루 뒤 보관 기간이
+    // 덮는다(db/retention.ts의 NOTIFICATION_DISMISSAL_RETENTION_DAYS). 그래서
+    // 포털 제 DB 일을 여기까지 묶어 두고, 느린 네트워크 호출인 백채널 통보를
+    // 마지막에 둔다.
+    //
+    // 실패해도 로그아웃은 끝까지 간다 — 표 하나의 문제가 전사 로그아웃 장애가
+    // 되면 안 된다. 새 규칙이 아니라 이 저장소가 이미 두 번 내린 판단이다:
+    // db/mutations/audit.ts(「기록 실패가 본래 작업을 실패시키지 않는다」)와
+    // 바로 아래 notifyBackchannelLogout(「시스템 하나가 죽었다고 아무도
+    // 로그아웃할 수 없게 되면 안 된다」).
+    try {
+      await clearDismissals(session.userId);
+    } catch (error) {
+      console.error(
+        "[logout] 알림 지움 기록 정리 실패:",
+        session.userId,
+        error
+      );
+    }
 
     // 각 시스템에도 알린다. 우리 세션만 끊으면 각 시스템이 발급한 자기
     // 쿠키는 그대로 살아 있다. 실패해도 로그아웃 자체는 진행한다 —

@@ -1,5 +1,6 @@
 import { secureCookiesEnabled } from "@/lib/config/env";
 import { appendAuditLog } from "@/lib/db/mutations/audit";
+import { clearDismissals } from "@/lib/db/mutations/notification-dismissals";
 import { notifyBackchannelLogout } from "@/lib/oidc/backchannel-logout";
 import { clientIp, redirectTo } from "@/lib/http/redirect";
 import {
@@ -34,6 +35,30 @@ export async function POST(request: Request) {
       sourceIp: clientIp(request),
       userAgent: request.headers.get("user-agent"),
     });
+
+    // 지운 알림 표시를 비운다 — api/oidc/logout과 같은 일이다(설계안 3-6).
+    //
+    // 🔴 **설계안이 빠뜨린 자리다.** 3-6은 api/oidc/logout 한 곳만 적었는데,
+    // 세션을 폐기하는 라우트는 그곳과 여기 둘이다(이쪽은 포털 화면의 로그아웃
+    // 단추). 한쪽만 고치면 포털 화면에서 로그아웃한 사람은 지움 기록이 남아,
+    // 다시 로그인해도 지웠던 알림이 계속 안 보인다 — 증상이 「내 알림만 안
+    // 뜬다」라서 원인을 찾기 어렵다.
+    //
+    // 자리와 실패 처리의 까닭은 api/oidc/logout/route.ts와 같다: 되돌아오지
+    // 못할 세션 폐기·감사 기록을 먼저 끝내고(지움 정리는 못 해도 하루 뒤
+    // 보관 기간이 덮는다), 포털 제 DB 일을 여기까지 묶은 뒤 느린 네트워크
+    // 호출인 백채널 통보를 마지막에 둔다. 실패해도 로그아웃은 끝까지 간다 —
+    // db/mutations/audit.ts와 아래 notifyBackchannelLogout이 이미 같은 판단을
+    // 해 두었다.
+    try {
+      await clearDismissals(session.userId);
+    } catch (error) {
+      console.error(
+        "[logout] 알림 지움 기록 정리 실패:",
+        session.userId,
+        error
+      );
+    }
 
     // 각 시스템에도 알린다. 우리 쿠키만 지우면 각 시스템이 발급한 자기
     // 쿠키는 그대로 살아 있다. 실패해도 로그아웃 자체는 진행한다.
