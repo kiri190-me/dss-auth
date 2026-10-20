@@ -6,3 +6,4 @@ export * from "./sso-sessions";
 export * from "./authorization-codes";
 export * from "./access-tokens";
 export * from "./audit-logs";
+export * from "./notification-dismissals";

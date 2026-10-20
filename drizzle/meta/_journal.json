@@ -36,6 +36,13 @@
       "when": 1787806058942,
       "tag": "0004_nice_vin_gonzales",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792457680275,
+      "tag": "0005_third_scalphunter",
+      "breakpoints": true
     }
   ]
 }
