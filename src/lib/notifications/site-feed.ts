@@ -23,6 +23,13 @@ import type { PortalNotificationFeed } from "./merge";
  * gather.ts 가 fetch 를 인자로 받는 것과 같은 이유로, 여기서는 DB 조회 넷을
  * 전부 인자로 받는다. 라우트는 그것을 진짜 함수로 채우는 열 줄짜리 껍데기다.
  *
+ * ── 🔴 이 방향의 통로는 이제 둘이다 ───────────────────────────────────────
+ * 읽기(여기 `handleSiteFeedRequest`)와 지움(site-dismissals.ts 의
+ * `handleDismissalRequest`). 둘이 **같은 자격증명으로 같은 문 여섯**을 지나므로
+ * 그 여섯을 `authorizeSiteRequest` 한 벌로 두고 나눠 쓴다. 베껴 두면 한쪽만
+ * 고치는 날 조용히 갈라지고, **갈라진 것이 보안 판정이면 증상이 없어** 아무도
+ * 모른다.
+ *
  * ── ⚠️ 이 통로로 사이트는 사람을 사칭할 수 있다 ────────────────────────────
  * 사이트가 `sub` 에 아무 사람이나 적어 보낼 수 있다. 그것을 막을 방법은 없다 —
  * 사이트의 서버가 스스로 「지금 이 사람의 화면을 그리는 중」이라고 말하는 것이
@@ -134,7 +141,19 @@ export function siteFeedCacheKey(clientId: string, userId: string): string {
   return `${encodeURIComponent(clientId)}:${userId}`;
 }
 
-export type SiteFeedDeps<C extends { clientId: string }> = {
+/**
+ * 문 여섯이 쓰는 재료 — 🔴 **두 통로가 나눠 쓴다.**
+ *
+ * 사이트 → 포털 방향의 통로는 이제 둘이다: 읽기(이 파일의
+ * `handleSiteFeedRequest`)와 지움(site-dismissals.ts 의 `handleDismissalRequest`).
+ * 둘은 **같은 자격증명으로 같은 여섯 문**을 지난다.
+ *
+ * 🔴 그래서 베끼지 않았다. 설계안 3-5 는 「순서까지 그대로 베낀다」고 적었는데,
+ * 「순서까지 그대로」는 **베껴서는 지킬 수 없는 성질**이다 — 한쪽만 고치는 날
+ * 둘이 조용히 갈라지고, 갈라진 것이 보안 판정이면 아무도 모른 채로 남는다
+ * (증상이 없기 때문이다). 한 벌이면 갈라질 길 자체가 없다.
+ */
+export type SiteRequestDeps<C extends { clientId: string }> = {
   /** 등록돼 있고 살아 있는 클라이언트만 돌려준다(없으면 null). */
   findActiveClient(clientId: string): Promise<C | null>;
   /** 저장된 해시와 대조한다. 타이밍에 기대지 않는 비교여야 한다. */
@@ -143,8 +162,6 @@ export type SiteFeedDeps<C extends { clientId: string }> = {
   findUser(userId: string): Promise<{ status: string } | null>;
   /** 🔴 그 사람이 이 시스템에 들어갈 수 있는가. 앱 런처와 같은 판정이어야 한다. */
   hasAccess(userId: string, client: C): Promise<boolean>;
-  /** 합쳐진 알림. `exceptClientId` 시스템에는 **묻지 않는다.** */
-  feedFor(params: { userId: string; exceptClientId: string }): Promise<PortalNotificationFeed>;
   /**
    * 인증에 **실패한** 요청만 센다. 통과한 요청은 여기 오지 않는다.
    *
@@ -153,6 +170,17 @@ export type SiteFeedDeps<C extends { clientId: string }> = {
    * 통째로 꺼진다. 막으려는 것은 시크릿을 두드려 보는 반복뿐이다.
    */
   countAuthFailure?(): RateLimitDecision;
+};
+
+/**
+ * 읽기 통로의 재료 = 문 여섯 + **합쳐진 알림을 만드는 일** 하나.
+ *
+ * 🔴 여섯을 여기 다시 적지 않는다. 다시 적는 순간 두 벌이 되고, 두 벌이 되면
+ * 위 주석이 막으려던 그 갈라짐이 타입에서부터 시작된다.
+ */
+export type SiteFeedDeps<C extends { clientId: string }> = SiteRequestDeps<C> & {
+  /** 합쳐진 알림. `exceptClientId` 시스템에는 **묻지 않는다.** */
+  feedFor(params: { userId: string; exceptClientId: string }): Promise<PortalNotificationFeed>;
 };
 
 export type SiteFeedResponse = {
@@ -166,10 +194,20 @@ export type SiteFeedResponse = {
 /**
  * 🔴 이 응답은 사람마다 다르고 30초면 뜻이 달라진다. 어디에도 남으면 안 된다.
  * 성공이든 거절이든 전부 붙인다.
+ *
+ * 🔵 지움 통로(site-dismissals.ts)도 이것을 쓴다 — 같은 머리말을 두 벌 적어
+ * 두면 한쪽에서 `pragma` 가 빠지는 날 **아무 증상 없이** 캐시에 남는다.
  */
-const NO_STORE: Record<string, string> = { "cache-control": "no-store", pragma: "no-cache" };
+export const NO_STORE: Record<string, string> = { "cache-control": "no-store", pragma: "no-cache" };
 
-function reject(
+/**
+ * 거절 하나를 짓는다.
+ *
+ * 🔵 지움 통로가 제 몫의 거절 둘(열쇠 없음·상한 초과)을 지을 때도 이것을 쓴다.
+ * 거절의 **모양**(error·error_description·no-store·logReason)이 통로마다 달라질
+ * 까닭이 없고, 달라지면 붙이는 쪽이 통로마다 다른 처리를 들어야 한다.
+ */
+export function reject(
   status: number,
   error: string,
   description: string,
@@ -218,8 +256,20 @@ function forbidden(logReason: string): SiteFeedResponse {
 }
 
 /**
- * 한 번의 요청을 끝까지 판정한다. 🔴 **던지지 않는다** — 던지면 사이트의
- * layout 이 500 을 받고, 그 사이트의 화면이 통째로 안 뜬다.
+ * 문 여섯을 지난 결과.
+ *
+ * 통과하면 **누가 무엇을 물었는지**가 전부 들어 있고, 막히면 그 자리에서 지은
+ * 거절 응답이 들어 있다. 부르는 쪽은 거절을 **그대로** 돌려주면 된다 — 손대는
+ * 순간 두 통로의 거절이 갈라진다.
+ */
+export type SiteRequestOutcome<C> =
+  | { ok: true; client: C; subject: string; body: string }
+  | { ok: false; response: SiteFeedResponse };
+
+/**
+ * 사이트 → 포털 요청의 문 여섯. 🔴 **읽기 통로와 지움 통로가 나눠 쓰는 한 벌이다.**
+ * 🔴 **던지지 않는다** — 던지면 사이트의 layout 이 500 을 받고, 그 사이트의
+ * 화면이 통째로 안 뜬다.
  *
  * 순서에 뜻이 있다:
  *   ① 주소에 비밀값이 실려 있는가 (DB 를 건드리기 전에 본다)
@@ -228,18 +278,27 @@ function forbidden(logReason: string): SiteFeedResponse {
  *   ④ 그 시스템이 맞는가          ← 여기서부터 DB
  *   ⑤ 그 사람이 쓸 수 있는가
  *   ⑥ 🔴 그 시스템이 그 사람을 볼 수 있는가
+ *
+ * ── 🔴 왜 읽은 본문을 돌려주는가 ───────────────────────────────────────────
+ * `request.text()` 는 **한 번만** 읽을 수 있다. 몸통이 이미 흘러간 뒤라 두 번째
+ * 부르는 쪽에는 **빈 문자열**이 온다 — 오류가 아니라 빈 값이다. 지움 통로는 이
+ * 본문에서 `keys` 를 더 꺼내야 하는데, 거기서 다시 읽으면 증상이 「sub 은
+ * 멀쩡한데 keys 만 언제나 비어 있다」가 되고 **그 말은 원인을 전혀 가리키지
+ * 않는다.** ③ 에서 이미 읽었으므로 읽은 것을 그대로 넘긴다.
  */
-export async function handleSiteFeedRequest<C extends { clientId: string }>(
+export async function authorizeSiteRequest<C extends { clientId: string }>(
   request: Request,
-  deps: SiteFeedDeps<C>
-): Promise<SiteFeedResponse> {
+  deps: SiteRequestDeps<C>
+): Promise<SiteRequestOutcome<C>> {
   // ① 🔴 비밀값은 주소에 실리지 않는다.
   if (hasCredentialInQuery(request.url)) {
-    return reject(
-      400,
-      "invalid_request",
-      "자격증명은 Authorization 머리말로만 받습니다. 주소에 실린 값은 접근 로그에 남으므로 이 시크릿은 다시 발급하세요.",
-      "credential_in_query"
+    return denied(
+      reject(
+        400,
+        "invalid_request",
+        "자격증명은 Authorization 머리말로만 받습니다. 주소에 실린 값은 접근 로그에 남으므로 이 시크릿은 다시 발급하세요.",
+        "credential_in_query"
+      )
     );
   }
 
@@ -247,7 +306,7 @@ export async function handleSiteFeedRequest<C extends { clientId: string }>(
   //    두드리는 요청은 조회 한 번 값도 쓰지 않고 돌아간다.
   const credentials = readBasicCredentials(request.headers.get("authorization"));
   if (!credentials) {
-    return withFailureLimit(deps, unauthorized("no_basic_credentials"));
+    return denied(withFailureLimit(deps, unauthorized("no_basic_credentials")));
   }
 
   // ③ 누구의 알림인가. 🔴 본문으로만 받는다(위 ①의 이유와 같다 — 사람의
@@ -256,15 +315,15 @@ export async function handleSiteFeedRequest<C extends { clientId: string }>(
   try {
     body = await request.text();
   } catch {
-    return reject(400, "invalid_request", "요청 본문을 읽을 수 없습니다.", "unreadable_body");
+    return denied(reject(400, "invalid_request", "요청 본문을 읽을 수 없습니다.", "unreadable_body"));
   }
 
   const subject = new URLSearchParams(body).get("sub")?.trim() ?? "";
   if (!subject) {
-    return reject(400, "invalid_request", "sub 가 필요합니다.", "no_subject");
+    return denied(reject(400, "invalid_request", "sub 가 필요합니다.", "no_subject"));
   }
   if (subject.length > MAX_SUBJECT_LENGTH) {
-    return reject(400, "invalid_request", "sub 가 너무 깁니다.", "subject_too_long");
+    return denied(reject(400, "invalid_request", "sub 가 너무 깁니다.", "subject_too_long"));
   }
 
   // ④ 부르는 쪽이 등록된 시스템인가.
@@ -273,20 +332,48 @@ export async function handleSiteFeedRequest<C extends { clientId: string }>(
     // 로그에 적는 client_id 는 **DB 에서 온 값**뿐이다(시크릿이 틀린 경우).
     // 없는 client_id 는 부르는 쪽이 지은 문자열이라 그대로 로그에 넣지
     // 않는다 — 줄바꿈을 섞어 로그를 어지럽히는 흔한 수법을 막는다.
-    return withFailureLimit(deps, unauthorized(client ? `bad_secret:${client.clientId}` : "unknown_client"));
+    return denied(
+      withFailureLimit(deps, unauthorized(client ? `bad_secret:${client.clientId}` : "unknown_client"))
+    );
   }
 
   // ⑤ 그 사람이 지금 쓸 수 있는 계정인가.
   const user = await deps.findUser(subject);
-  if (!user) return forbidden("unknown_subject");
-  if (user.status !== "ACTIVE") return forbidden(`subject_status=${user.status}`);
+  if (!user) return denied(forbidden("unknown_subject"));
+  if (user.status !== "ACTIVE") return denied(forbidden(`subject_status=${user.status}`));
 
   // ⑥ 🔴 그 시스템이 그 사람을 볼 수 있는가. 이 줄이 이 파일의 이유다.
   if (!(await deps.hasAccess(subject, client))) {
-    return forbidden("no_client_access");
+    return denied(forbidden("no_client_access"));
   }
 
-  const feed = await deps.feedFor({ userId: subject, exceptClientId: client.clientId });
+  // 🔴 읽은 본문을 그대로 넘긴다(위 주석). 다시 읽을 수 없다.
+  return { ok: true, client, subject, body };
+}
+
+/** 거절 하나를 「막혔다」로 감싼다. 🔴 응답 자체에는 손대지 않는다. */
+function denied(response: SiteFeedResponse): { ok: false; response: SiteFeedResponse } {
+  return { ok: false, response };
+}
+
+/**
+ * 한 번의 요청을 끝까지 판정하고 합쳐진 알림을 내준다. 🔴 **던지지 않는다** —
+ * 던지면 사이트의 layout 이 500 을 받고, 그 사이트의 화면이 통째로 안 뜬다.
+ *
+ * 🔴 문 여섯은 `authorizeSiteRequest` 에 있다. **여기에 다시 적지 않는다** —
+ * 지움 통로가 같은 여섯을 지나야 하므로, 한 벌이어야 갈라지지 않는다.
+ */
+export async function handleSiteFeedRequest<C extends { clientId: string }>(
+  request: Request,
+  deps: SiteFeedDeps<C>
+): Promise<SiteFeedResponse> {
+  const authorized = await authorizeSiteRequest(request, deps);
+  if (!authorized.ok) return authorized.response;
+
+  const feed = await deps.feedFor({
+    userId: authorized.subject,
+    exceptClientId: authorized.client.clientId,
+  });
   return { status: 200, body: feed, headers: NO_STORE };
 }
 
@@ -299,7 +386,7 @@ export async function handleSiteFeedRequest<C extends { clientId: string }>(
  * 확인하라」를 적어 둔다 — 아니면 「갑자기 429 가 온다」로만 보인다).
  */
 function withFailureLimit<C extends { clientId: string }>(
-  deps: SiteFeedDeps<C>,
+  deps: SiteRequestDeps<C>,
   rejection: SiteFeedResponse
 ): SiteFeedResponse {
   const decision = deps.countAuthFailure?.();
