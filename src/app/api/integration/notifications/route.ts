@@ -20,9 +20,15 @@ import { getSiteNotificationFeed } from "@/lib/notifications/site-service";
  *
  *   sub=<포털 users.id (ID 토큰의 sub)>
  *
- * 답(200): { items, count, sources, degraded }
- *   — 조각 3 이 포털 자신에게 내주는 모양 그대로다(merge.ts 의
+ * 답(200): { items, count, sources, degraded, dismissed }
+ *   — 앞 넷은 조각 3 이 포털 자신에게 내주는 모양 그대로다(merge.ts 의
  *     PortalNotificationFeed = `@dss/ui` 의 NotificationBell 이 받는 모양).
+ *   — 🔴 `dismissed: string[]` 는 **그 사람이 지운 알림의 열쇠**인데 **부른
+ *     사이트 몫만** 담긴다(남의 시스템에서 지운 것은 안 간다 — 까닭은
+ *     notifications/dismissals.ts 의 applySiteDismissals). 그 사이트가 제 손으로
+ *     그리는 **제 알림 목록에서 이 열쇠들을 빼야 한다.** 남의 줄은 포털이 이미
+ *     `items`·`count` 에서 빼고 보낸다.
+ *   🔵 **모르는 칸은 무시되므로 아직 안 고친 사이트도 그대로 돈다.**
  *
  * 🔴 **부른 사이트 자신의 알림은 빠져 있다.** 까닭은 site-service.ts 맨 위에
  * 길게 적었다. 사이트는 제 알림을 제 손으로 이어 붙인다.

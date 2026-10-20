@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   MAX_DISMISSAL_KEYS_PER_REQUEST,
   applyDismissals,
+  applySiteDismissals,
   parseDismissalKey,
   readDismissalKeys,
 } from "./dismissals";
@@ -260,6 +261,87 @@ test("🔴 지울 것이 없어도 새 객체를 돌려준다 — 원본을 그�
   assert.notEqual(applied.sources, original.sources);
   assert.notEqual(applied.sources[0], original.sources[0]);
   assert.deepEqual(applied, original);
+});
+
+/* ── 사이트에 내줄 때 ─────────────────────────────────────────────────────── */
+
+test("🔴 ⑧ dismissed 에는 부른 사이트의 열쇠만 담긴다 — 남의 시스템 것은 안 간다", () => {
+  // 열쇠의 id 에는 수리 건 번호 같은 업무 식별자가 들어 있다. 전부 보내면
+  // 「그 사람이 다른 시스템에서 무엇을 지웠는지」가 그대로 넘어간다.
+  const applied = applySiteDismissals(
+    feed(),
+    new Set([
+      "rf-service-system:REPAIR_CASE_APPROVAL:RC-2026-0001",
+      "dss-leave:b",
+      "dss-inventory:OUTBOUND_CONFIRM:REQ-77",
+    ]),
+    "rf-service-system"
+  );
+  assert.deepEqual(applied.dismissed, ["rf-service-system:REPAIR_CASE_APPROVAL:RC-2026-0001"]);
+});
+
+test("🔴 접두사가 비슷한 시스템이 섞여 들어가지 않는다 — 첫 `:` 까지가 전부 같아야 한다", () => {
+  // `startsWith(clientId)` 로 골랐다면 `dss-leave-admin:…` 이 `dss-leave` 의
+  // 몫으로 딸려 간다. 판정이 parseDismissalKey 하나라야 그 길이 없다.
+  const applied = applySiteDismissals(
+    feed(),
+    new Set(["dss-leave-admin:x", "dss-leave:b"]),
+    "dss-leave"
+  );
+  assert.deepEqual(applied.dismissed, ["dss-leave:b"]);
+});
+
+test("🔴 items·count·sources[].count 가 applyDismissals 와 똑같이 줄어든다", () => {
+  // 거르는 규칙이 두 벌이 되면 포털의 종과 사이트의 종이 다른 숫자를 보여 준다.
+  const dismissed = new Set(["rf-service-system:a"]);
+  const site = applySiteDismissals(feed(), dismissed, "rf-service-system");
+  const plain = applyDismissals(feed(), dismissed);
+
+  assert.deepEqual(site.items, plain.items);
+  assert.equal(site.count, plain.count);
+  assert.deepEqual(site.sources, plain.sources);
+  assert.equal(site.degraded, plain.degraded);
+});
+
+test("지운 것이 없으면 dismissed 는 빈 배열이다 — 칸 자체는 언제나 있다", () => {
+  // 없을 때 칸을 빼면 사이트가 `?? []` 를 들어야 하고, 안 들면 그날 터진다.
+  const applied = applySiteDismissals(feed(), new Set<string>(), "rf-service-system");
+  assert.deepEqual(applied.dismissed, []);
+  assert.equal(applied.items.length, 2);
+  assert.equal(applied.count, 2);
+});
+
+test("🔴 ⑨ 원본 feed 가 바뀌지 않는다 — 들어오는 것은 캐시에 든 바로 그 객체다", () => {
+  const original = feed();
+  const beforeItems = original.items.length;
+  const beforeCount = original.count;
+  const beforeSourceCounts = original.sources.map((source) => source.count);
+
+  const applied = applySiteDismissals(
+    original,
+    new Set(["rf-service-system:a", "dss-leave:b"]),
+    "dss-leave"
+  );
+
+  assert.equal(applied.items.length, 0);
+  assert.equal(original.items.length, beforeItems);
+  assert.equal(original.count, beforeCount);
+  assert.deepEqual(
+    original.sources.map((source) => source.count),
+    beforeSourceCounts
+  );
+  assert.equal("dismissed" in original, false);
+});
+
+test("🔴 모양이 깨진 열쇠가 섞여 있어도 터지지 않고 그냥 안 담긴다", () => {
+  // 표에 쌓인 열쇠도 결국 **바깥에서 지어 보낸 문자열**이다. 쓰기 통로가 걸러
+  // 주지만, 그 통로가 느슨해지는 날 여기서 터지면 사이트의 화면이 통째로 안 뜬다.
+  const applied = applySiteDismissals(
+    feed(),
+    new Set(["", ":", ":abc", "abc:", "콜론없음", "rf-service-system:a"]),
+    "rf-service-system"
+  );
+  assert.deepEqual(applied.dismissed, ["rf-service-system:a"]);
 });
 
 test("읽기와 거르기가 이어 붙는다 — 본문에서 읽은 열쇠로 바로 거른다", () => {

@@ -262,3 +262,58 @@ export function applyDismissals(
     degraded: feed.degraded,
   };
 }
+
+/**
+ * 사이트에 내줄 때의 모양 — 거른 feed 에 **그 사이트 몫의 지운 열쇠**가 한 칸 붙는다.
+ *
+ * 🔴 **왜 한 칸이 더 필요한가.** 포털은 부른 사이트 자신의 알림을 애초에 담아 주지
+ * 않는다(site-service.ts 맨 위의 `exceptClientId`). 그래서 **그 사이트가 제 손으로
+ * 그리는 제 알림**은 포털이 거를 수가 없다 — 포털의 손이 닿지 않는 목록이다. 이
+ * 칸이 없으면 「A/S 에서 ✕ 를 눌렀는데 A/S 종에만 그대로 뜬다」가 된다.
+ */
+export type SiteDismissalFeed = PortalNotificationFeed & {
+  /** 🔴 **부른 사이트 몫만.** 사이트가 제 알림 목록에서 이 열쇠들을 뺀다. */
+  dismissed: string[];
+};
+
+/**
+ * 거르고 나서, 사이트가 제 몫을 거를 수 있게 **그 사이트의 열쇠만** 얹어 준다.
+ *
+ * ── 🔴 왜 지운 열쇠를 전부 돌려주지 않는가 ─────────────────────────────────
+ * 설계안 3-4 는 「포털이 `dismissed` 를 그대로 돌려주고 시스템이 제 접두사가 붙은
+ * 것만 고른다」고 적었다. **그러지 않았다.**
+ *
+ * 🔴 **포털은 사이트마다 보여 줄 범위를 이미 좁혀서 내준다**(site-service.ts 맨 위의
+ * `exceptClientId`, 그리고 그 앞의 listAccessibleClients — 그 사람이 들어갈 수 있는
+ * 시스템의 알림만 담긴다). 그런데 지운 열쇠를 전부 보내면 그 좁힘이 무의미해진다.
+ * **그 사람이 어느 시스템에서 무엇을 지웠는지**가 통째로 넘어가기 때문이다. 열쇠는
+ * `{client_id}:{id}` 이고 그 `id` 에는 `REPAIR_CASE_APPROVAL:RC-2026-0001` 처럼
+ * **수리 건 번호 같은 업무 식별자**가 들어 있다. 알림 본문은 걸러서 안 보내면서
+ * 그 알림의 열쇠는 보내는 것은 앞뒤가 맞지 않는다.
+ *
+ * 사이트가 쓸 것은 제 것뿐이다. 포털이 골라 보내면 **새는 것도 없고 사이트가 할
+ * 일도 준다**(접두사를 떼어 보며 고르는 코드가 사이트마다 한 벌씩 생기지 않는다).
+ *
+ * ── 🔴 판정은 parseDismissalKey 하나다 ────────────────────────────────────
+ * `key.startsWith(clientId + ":")` 로 적으면 같은 규칙이 두 벌이 된다. 열쇠를
+ * 가르는 규칙은 그 함수 하나여야 한다 — 「첫 `:` 에서만 가른다」가 거기 적혀 있고,
+ * 모양이 깨진 열쇠(`:abc`·`abc:`)를 버리는 것도 거기 한 자리다. 표에서 읽어 온
+ * 열쇠라 해도 **바깥에서 지어 보낸 문자열**이 쌓인 것이므로 믿지 않는다.
+ *
+ * 🔴 **받은 feed 를 제자리에서 고치지 않는다.** 위 applyDismissals 가 언제나 새
+ * 객체를 만들고, 여기서는 그 결과에 칸 하나를 얹기만 한다 — 그 성질에 기대되
+ * 깨뜨리지 않는다. 까닭은 저쪽 주석에 길게 적혀 있다(캐시에 든 바로 그 객체다).
+ */
+export function applySiteDismissals(
+  feed: PortalNotificationFeed,
+  dismissed: ReadonlySet<string>,
+  clientId: string
+): SiteDismissalFeed {
+  const mine: string[] = [];
+  for (const key of dismissed) {
+    // 모양이 깨진 열쇠는 parseDismissalKey 가 null 을 낸다 — 터지지 않고 빠진다.
+    if (parseDismissalKey(key)?.clientId === clientId) mine.push(key);
+  }
+
+  return { ...applyDismissals(feed, dismissed), dismissed: mine };
+}

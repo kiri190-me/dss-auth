@@ -2,8 +2,10 @@ import "server-only";
 import { getIssuer } from "@/lib/config/env";
 import { getSigningKey } from "@/lib/crypto/keys";
 import { listAccessibleClients } from "@/lib/db/queries/clients";
+import { listDismissedKeys } from "@/lib/db/queries/notification-dismissals";
 import { signPortalServiceToken } from "@/lib/oidc/service-token";
 import { createUserCache } from "./cache";
+import { applySiteDismissals, type SiteDismissalFeed } from "./dismissals";
 import { gatherNotifications, type SignServiceToken } from "./gather";
 import { emptyFeed, type PortalNotificationFeed } from "./merge";
 import { siteFeedCacheKey } from "./site-feed";
@@ -95,20 +97,77 @@ function signerFor(subject: string): SignServiceToken {
 }
 
 /**
- * 사이트에 내줄 「이 사람의 지금 알림」.
+ * 「그만 보겠다」고 한 줄을 빼고, **그 사이트 몫의 지운 열쇠**를 한 칸 얹는다.
+ *
+ * 🔴 service.ts 의 `withoutDismissed` 와 **같은 판단이고 다른 반환 모양**이다.
+ * 베끼는 까닭은 이 파일 맨 위 상수들과 같다 — 저쪽은 `PortalNotificationFeed`
+ * 를, 여기는 칸이 하나 더 붙은 `SiteDismissalFeed` 를 돌려줘야 해서 하나로
+ * 합칠 수 없다. 거르는 **계산 자체**는 두 벌이 아니다(둘 다 dismissals.ts 의
+ * applyDismissals 로 수렴한다 — applySiteDismissals 가 그것을 그대로 쓴다).
+ *
+ * ── 🔴 캐시 바깥에서, 꺼낸 뒤에 부른다 ─────────────────────────────────────
+ * 거른 결과를 캐시하면 「지웠는데 30초 남는다」가 된다. 그리고 `siteFeedCache`
+ * 는 열쇠에 `clientId` 가 섞여 있어, 한 사람의 것을 버리려면 **등록된 시스템을
+ * 전부 돌아야 한다.** 거르지 않은 것을 캐시해 두면 그 무효화가 아예 필요 없다
+ * (설계안 3-2).
+ *
+ * ── 🔴 지움 목록을 못 읽으면 — 2026-10-20 사용자 결정 ──────────────────────
+ * **거르지 않은 feed 를 `degraded: true` + `dismissed: []` 로 돌려준다.** 종을
+ * 통째로 끄면 알림이 아예 안 보인다. 지움은 **보기를 미루는 것이지 지워지는
+ * 자료가 아니므로**(설계안 5절 ③), 지웠던 줄이 다시 뜨는 쪽이 덜 나쁘다. 그렇다고
+ * 조용히 넘어가면 안 되므로 `degraded` 를 세우고 로그를 한 줄 남긴다 — 「알림이
+ * 없다」와 「못 물어봤다」를 나눠 그리는 것이 이 저장소의 규칙이다(merge.ts).
+ *
+ * 🔵 `dismissed: []` 는 사이트에게 「지운 것이 없다」로 읽힌다. 거짓이지만 **안전한
+ * 쪽의 거짓**이다 — 사이트가 제 줄을 하나도 안 빼게 되므로, 못 읽은 지움 때문에
+ * 멀쩡한 알림이 사라지는 일은 없다.
+ */
+async function withoutDismissed(
+  params: { userId: string; clientId: string },
+  feed: PortalNotificationFeed
+): Promise<SiteDismissalFeed> {
+  try {
+    return applySiteDismissals(feed, await listDismissedKeys(params.userId), params.clientId);
+  } catch (error) {
+    console.error("[notifications] 지운 알림 목록을 읽지 못했습니다:", error);
+    // 🔵 새 객체다. 캐시에 든 feed 를 제자리에서 고치면 그 짝의 다음 요청이
+    // 까닭 없이 degraded 로 나간다.
+    return { ...feed, degraded: true, dismissed: [] };
+  }
+}
+
+/**
+ * 사이트에 내줄 「이 사람의 지금 알림」. **그 사람이 지운 줄은 빠져 있고,
+ * 그 사이트 몫의 지운 열쇠가 `dismissed` 로 함께 간다.**
  *
  * 🔴 **던지지 않는다.** 이 값을 기다리는 것은 남의 사이트의 layout 이다 —
  * 여기서 터지면 그 사이트의 화면이 통째로 안 뜬다(설계서 F-8 의 그 줄이
  * 한 칸 더 밖으로 나온 자리다).
+ *
+ * ── 🔴 늘어난 칸이 어디서 붙는가 ───────────────────────────────────────────
+ * **여기다.** 응답 규격(docs/사이트-알림-통로.md)에 칸 하나가 는 것이 이 반환
+ * 타입 하나로 정해진다 — 라우트는 이 값을 그대로 직렬화하고(route.ts 의 마지막
+ * 줄), site-feed.ts 의 `feedFor` 는 반환 타입이 `PortalNotificationFeed` 라도
+ * 칸이 더 붙은 객체를 그대로 통과시킨다. 🔴 **그래서 site-feed.ts 는 고치지
+ * 않았다** — 보안 판정(문 여섯)이 든 파일이라 열 이유가 없는 변경이었다.
+ *
+ * ── 🔴 돌아가는 길이 셋이고, 거를 곳은 둘이다 ─────────────────────────────
+ *  ① 캐시 적중  — 🔴 **여기도 거른다.** 빠뜨리기 가장 쉬운 자리이고, 빠뜨리면
+ *     증상이 「지우면 한 번 사라졌다가 30초 동안 도로 뜬다」가 된다.
+ *  ② 새로 모음  — 거르지 않은 것을 캐시에 넣은 **뒤에** 거른다.
+ *  ③ 모으기 실패 — 빈 목록이라 거를 것이 없다. 🔵 그래도 `dismissed` 칸은
+ *     있어야 한다. 칸이 **있다 없다 하면** 사이트가 그 갈래를 따로 들어야 한다.
  */
 export async function getSiteNotificationFeed(params: {
   userId: string;
   /** 🔴 부른 사이트. 이 시스템에는 묻지 않는다. */
   exceptClientId: string;
-}): Promise<PortalNotificationFeed> {
+}): Promise<SiteDismissalFeed> {
   const key = siteFeedCacheKey(params.exceptClientId, params.userId);
+  const dismissalParams = { userId: params.userId, clientId: params.exceptClientId };
+
   const cached = siteFeedCache.get(key, Date.now());
-  if (cached) return cached;
+  if (cached) return withoutDismissed(dismissalParams, cached); // ①
 
   let feed: PortalNotificationFeed;
   try {
@@ -127,9 +186,10 @@ export async function getSiteNotificationFeed(params: {
     });
   } catch (error) {
     console.error("[notifications] 사이트에 내줄 알림을 모으지 못했습니다:", error);
-    return { ...emptyFeed(), degraded: true };
+    return { ...emptyFeed(), degraded: true, dismissed: [] }; // ③
   }
 
+  // ② 🔴 캐시에 들어가는 것은 **거르지 않은** feed 다.
   siteFeedCache.set(key, feed, Date.now(), feed.degraded ? DEGRADED_TTL_MS : undefined);
-  return feed;
+  return withoutDismissed(dismissalParams, feed);
 }

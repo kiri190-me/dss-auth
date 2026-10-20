@@ -2,8 +2,10 @@ import "server-only";
 import { getIssuer } from "@/lib/config/env";
 import { getSigningKey } from "@/lib/crypto/keys";
 import { listAccessibleClients } from "@/lib/db/queries/clients";
+import { listDismissedKeys } from "@/lib/db/queries/notification-dismissals";
 import { signPortalServiceToken } from "@/lib/oidc/service-token";
 import { createUserCache } from "./cache";
+import { applyDismissals } from "./dismissals";
 import {
   gatherNotificationSettings,
   gatherNotifications,
@@ -133,15 +135,67 @@ async function sourcesFor(userId: string): Promise<NotificationSource[]> {
 }
 
 /**
- * 「이 사람의 지금 알림」 — 통합 종이 그릴 전부.
+ * 「그만 보겠다」고 한 줄을 뺀다. 🔴 **캐시 바깥에서, 꺼낸 뒤에 부른다.**
+ *
+ * ── 🔴 왜 거른 결과를 캐시에 넣지 않는가 ───────────────────────────────────
+ * 넣으면 **「지웠는데 30초 남는다」**가 된다. ✕ 를 누른 사람에게는 그 30초가
+ * 「안 눌렸나」로 보여 다시 누르게 되고, 그래도 그대로다. 거르지 않은 것을
+ * 캐시해 두면 ✕ 를 누른 **다음 화면부터 바로** 사라진다 — 지움 목록은 매 요청
+ * DB 에서 새로 읽기 때문이다(사람 한 명치, 색인 하나라 싸다). 🔵 그래서 캐시
+ * 무효화가 **아예 필요 없다**(설계안 3-2).
+ *
+ * ── 🔴 지움 목록을 못 읽으면 — 2026-10-20 사용자 결정 ──────────────────────
+ * **거르지 않은 feed 를 degraded 로 돌려준다.** 종을 통째로 끄는 길도 있지만
+ * 그러면 알림이 아예 안 보인다. 지움은 **보기를 미루는 것이지 지워지는 자료가
+ * 아니므로**(설계안 5절 ③), 지웠던 줄이 다시 뜨는 쪽이 덜 나쁘다.
+ *
+ * 🔴 그렇다고 **조용히 넘어가지는 않는다.** `degraded` 를 세워 화면이 「뭔가
+ * 잘못됐다」를 그릴 수 있게 한다 — 「알림이 없다」와 「못 물어봤다」를 나눠
+ * 그리는 것이 이 저장소의 규칙이다(merge.ts 의 degraded 주석). 그리고 로그에
+ * 한 줄 남긴다. 안 남기면 증상이 「지웠는데 다시 뜬다」 하나뿐이라 DB 를
+ * 의심할 단서가 없다(queries/notification-dismissals.ts 의 그 주석).
+ *
+ * 🔵 `{ ...feed, degraded: true }` 는 **새 객체**다. 캐시에 든 feed 를 제자리에서
+ * 고치면 그 사람의 다음 요청이 까닭 없이 degraded 로 나간다.
+ */
+async function withoutDismissed(
+  userId: string,
+  feed: PortalNotificationFeed
+): Promise<PortalNotificationFeed> {
+  try {
+    return applyDismissals(feed, await listDismissedKeys(userId));
+  } catch (error) {
+    console.error("[notifications] 지운 알림 목록을 읽지 못했습니다:", error);
+    return { ...feed, degraded: true };
+  }
+}
+
+/**
+ * 「이 사람의 지금 알림」 — 통합 종이 그릴 전부. **그 사람이 지운 줄은 빠져 있다.**
  *
  * 🔴 **던지지 않는다.** 종이 통째로 안 뜨는 것이 가장 나쁘다(설계서 F-8).
  * DB 조회까지 실패하면 빈 목록에 degraded 만 세워 돌려준다 — 「알림이 없다」와
  * 「못 물어봤다」는 종이 다르게 그려야 하는 두 가지다.
+ *
+ * ── 🔴 돌아가는 길이 셋이고, 거를 곳은 둘이다 ─────────────────────────────
+ *  ① 캐시 적중  — 🔴 **여기도 거른다.** 빠뜨리기 가장 쉬운 자리이고, 빠뜨리면
+ *     증상이 「지우면 한 번 사라졌다가 30초 동안 도로 뜬다」가 된다.
+ *  ② 새로 모음  — 거르지 않은 것을 캐시에 넣은 **뒤에** 거른다(위 주석).
+ *  ③ 모으기 실패 — 빈 목록이라 거를 것이 없다. 그대로 둔다.
+ *
+ * ── 🔴 알림을 다 지우면 `/apps` 타일의 빨간 점도 사라진다 — 의도한 동작이다 ──
+ * **2026-10-20 사용자 결정.** 앱 런처(`src/app/apps/page.tsx`)가 같은 이 함수를
+ * 부르고, `shouldShowTileDot` 이 `sources[].count` 를 보는데 그 숫자를 여기서
+ * 함께 줄이기 때문이다(dismissals.ts 의 applyDismissals). 「그만 보겠다」고 한
+ * 사람에게 점만 남겨 둘 이유가 없다.
+ *
+ * 🔴 이 줄을 적어 두는 까닭은 **점이 사라진 것을 보고 버그로 신고하기 때문**이다.
+ * 고칠 곳이 아니다. 점만 살리고 싶어지면 거기서 거르지 않은 feed 를 따로 받아야
+ * 하는데, 그러면 「지웠는데 점은 남는다」라는 더 이상한 상태가 된다.
  */
 export async function getNotificationFeed(userId: string): Promise<PortalNotificationFeed> {
   const cached = feedCache.get(userId, Date.now());
-  if (cached) return cached;
+  if (cached) return withoutDismissed(userId, cached); // ①
 
   let feed: PortalNotificationFeed;
   try {
@@ -151,11 +205,12 @@ export async function getNotificationFeed(userId: string): Promise<PortalNotific
     });
   } catch (error) {
     console.error("[notifications] 알림을 모으지 못했습니다:", error);
-    return { ...emptyFeed(), degraded: true };
+    return { ...emptyFeed(), degraded: true }; // ③
   }
 
+  // ② 🔴 캐시에 들어가는 것은 **거르지 않은** feed 다.
   feedCache.set(userId, feed, Date.now(), feed.degraded ? DEGRADED_TTL_MS : undefined);
-  return feed;
+  return withoutDismissed(userId, feed);
 }
 
 /**
