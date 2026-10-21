@@ -11,6 +11,11 @@ import { createUserCache } from "./cache";
 import { applySiteDismissals, type SiteDismissalFeed } from "./dismissals";
 import { gatherNotifications, type SignServiceToken } from "./gather";
 import { emptyFeed, type PortalNotificationFeed } from "./merge";
+import {
+  ownAcknowledgedKeys,
+  withOwnAcknowledgements,
+  type SiteNotificationFeed,
+} from "./own-acknowledgements";
 import { siteFeedCacheKey } from "./site-feed";
 import { toNotificationSources } from "./sources";
 
@@ -21,9 +26,15 @@ import { toNotificationSources } from "./sources";
  * service.ts 의 `getNotificationFeed(userId)` 와 하는 일이 같다 — 다른 것은
  * 하나뿐이다:
  *
- *   🔴 **부른 사이트 자신에게는 묻지 않는다.**
+ *   🔴 **부른 사이트 자신의 알림은 내주지 않는다.**
  *
- * ── 왜 빼는가 (판단과 까닭) ────────────────────────────────────────────────
+ * ⚠️ **2026-10-22 에 한 낱말이 달라졌다.** 전에는 「**묻지** 않는다」였는데 지금은
+ * 「**내주지** 않는다」다. 포털은 부른 사이트에게도 한 번 묻되, 받아 온 줄은
+ * `items`·`count`·`sources` 어디에도 넣지 않고 **확인(✓) 열쇠를 가리는 데만** 쓴다.
+ * 까닭과 실측은 아래 「🔴 부른 사이트에게도 묻는다」 절에 있다. 내주는 모양은
+ * 그대로이므로 **사이트가 받는 것은 달라지지 않는다**(칸 하나가 늘 뿐이다).
+ *
+ * ── 왜 내주지 않는가 (판단과 까닭) ─────────────────────────────────────────
  * A/S 가 물었을 때 A/S 알림까지 돌려주면 이렇게 된다:
  *
  *   A/S 의 layout → 포털 → **A/S 의 /api/integration/notifications**
@@ -53,6 +64,34 @@ import { toNotificationSources } from "./sources";
  * 목록을 이어 붙이고 개수를 더한다(그 모양은 merge.ts 의 아홉 칸, 곧
  * `@dss/ui` 의 NotificationBellItem 과 같다). docs/사이트-알림-통로.md 에
  * 적어 두었다.
+ *
+ * ── 🔴 부른 사이트에게도 묻는다 — 확인(✓) 열쇠를 가리려고만 (2026-10-22) ────
+ * 사이트가 제 알림을 ✓ 로 거르려면 포털이 **뺄 열쇠**를 알려 줘야 하는데, 그
+ * 판정은 조건 셋이 모두 맞아야 한다(acknowledgements.ts): ① 기록이 있고
+ * ② **지문이 지금 내용과 같고** ③ 분류가 `INFO` 다. ②·③ 은 **그 줄 자체**가
+ * 있어야 볼 수 있고, 그 줄은 위 네 까닭 때문에 이 목록에 없다. 그래서 한 번
+ * 묻는다. 길의 비교와 (나)를 버린 까닭은 own-acknowledgements.ts 머리말에 있다.
+ *
+ * 🔴 **되돌기(무한 호출)는 생기지 않는다 — 코드로 확인했다.** 각 사이트가 포털에
+ * 내주는 `/api/integration/notifications`(GET · 포털 서명 Bearer)는 **제 DB 만**
+ * 읽는다. 실제로 열어 확인한 곳 넷: RF_Service_System(`listMyNotifications`) ·
+ * dss-improvements(`listOwnNotifications`) · dss-leave(`pendingApprovalNotifications`)
+ * · dss-board(공지 조회 둘). 포털을 되부르는 곳이 한 군데도 없다. 🔵 그리고 그것은
+ * **오늘 이미 참이어야 하는 성질**이다 — 포털 제 종(`getNotificationFeed`)이 평소
+ * 그 통로들을 전부 두드리고 있으므로, 어느 하나라도 포털을 되부르면 오늘도 벌써
+ * 무한히 돌았을 것이다. 여기서 느는 것은 **부른 사이트 하나**뿐이고 깊이는 1 이다.
+ *
+ * 🔴 **왕복은 하나 는다. 기다리는 시간은 거의 안 는다 — 재서 확인했다.**
+ * `gatherNotifications` 는 시스템들을 `Promise.all` 로 **동시에** 두드린다
+ * (gather.ts). 그래서 느는 것은 합이 아니라 「가장 느린 한 곳」이고, 여기 더해지는
+ * 한 곳은 **지금 이 요청을 보낸 그 서버**다(죽어 있을 수 없다). 타임아웃도 그대로
+ * 1.5초이고, 그 1.5초는 나머지와 **겹쳐서** 흐른다.
+ * 🔵 그리고 이 답은 아래 `siteFeedCache` 에 **함께** 담긴다 — 30초에 한 번이다.
+ *
+ * 🔴 **치르는 값 하나: 가리는 판단이 최대 30초 낡는다.** 캐시 때문이다. 내용이
+ * 방금 바뀐 제 줄이 **최대 30초 동안 확인된 것으로 가려질 수 있다.** 🔵 스스로
+ * 낫고(30초 뒤 다시 묻는다), 확인 통로가 이미 같은 값을 같은 까닭으로 치르고 있다
+ * (api/integration/notification-acknowledgements/route.ts 의 ⚠️ 그 줄).
  * ============================================================================
  */
 
@@ -79,7 +118,27 @@ const DEGRADED_TTL_MS = 5_000;
  */
 const MAX_CACHED_PAIRS = 1_000;
 
-const siteFeedCache = createUserCache<PortalNotificationFeed>({
+/**
+ * 한 번 모아 온 것 한 벌. 🔴 **둘을 한 칸에 담는다.**
+ *
+ * 나눠 담으면 열쇠가 둘이 되고, 두 칸이 **다른 나이**로 상할 수 있다 — 그러면
+ * 「남의 줄은 새것인데 제 줄을 가리는 판단만 30초 낡은」 상태가 생긴다. 한 칸에
+ * 담으면 둘이 언제나 같은 순간의 답이다.
+ */
+type SiteFeedPair = {
+  /** 🔴 **남의 시스템 줄.** 이것만 사이트에 내준다. */
+  others: PortalNotificationFeed;
+  /**
+   * 🔴 **부른 사이트 제 줄. 내주지 않는다** — 확인(✓) 열쇠를 가리는 데만 쓴다.
+   *
+   * 🔵 「못 물어봤다」와 「제 알림이 없다」는 이 값의 `degraded` 로 갈린다.
+   * 알림 통로가 없는 시스템(계측기·PO)이 부르면 `gatherNotifications([])` 가
+   * **빈 feed · degraded 아님**을 돌려준다 — 가릴 것이 없는 것이 맞는 답이다.
+   */
+  own: PortalNotificationFeed;
+};
+
+const siteFeedCache = createUserCache<SiteFeedPair>({
   ttlMs: FEED_TTL_MS,
   maxUsers: MAX_CACHED_PAIRS,
 });
@@ -142,37 +201,61 @@ async function withoutDismissed(
 /**
  * 🔴 **「해소됐다」고 확인한 줄을 뺀다.** service.ts 의 `withoutAcknowledged` 와
  * **같은 판단이고 다른 반환 모양**이다 — 까닭은 이 파일의 다른 베낌들과 같다
- * (저쪽은 `PortalNotificationFeed`, 여기는 칸이 하나 더 붙은 `SiteDismissalFeed`).
+ * (저쪽은 `PortalNotificationFeed`, 여기는 칸이 **둘** 더 붙은 `SiteNotificationFeed`).
  * 거르는 **계산 자체**는 두 벌이 아니다 — 둘 다 acknowledgements.ts 로 수렴한다.
+ *
+ * ── 🔴 일을 **둘** 한다 ───────────────────────────────────────────────────
+ *  ① 포털이 모아 온 **남의 시스템 줄**에서 확인된 것을 뺀다(service.ts 와 같다).
+ *  ② 🔴 **부른 사이트 제 줄** 가운데 확인된 것의 열쇠를 `acknowledged` 로 얹는다.
+ *     그 줄들은 포털이 내주지 않으므로 뺄 수가 없다 — 사이트가 제 손으로 빼라고
+ *     열쇠만 넘긴다(own-acknowledgements.ts).
+ *
+ * 🔵 둘이 **같은 `state` 를 쓴다.** 기록도 분류도 한 번 읽어 양쪽에 그대로 먹인다 —
+ * 나눠 읽으면 두 판단이 서로 다른 나이의 DB 를 보게 되고, 관리자가 분류를 바꾸는
+ * 바로 그 순간 「남의 줄은 사라졌는데 제 줄은 남는」 답이 나간다.
  *
  * ── 🔴 `dismissed` 칸에는 손대지 않는다 ───────────────────────────────────
  * 그 칸은 **지운(✕) 열쇠**를 사이트에 넘겨 주는 자리다. 확인한 열쇠를 거기 섞으면
  * 사이트가 그것을 지움으로 읽어 **제 목록에서 영구히 빼 버린다** — 뜻이 다른
- * 둘이 한 칸에서 뭉개진다. 🔵 사이트가 제 알림을 확인으로 거르는 길은 **다음
- * 조각**이다(이 조각은 포털이 받을 준비까지다). 그때 칸을 하나 더 내면 된다.
- *
- * 🔵 그래서 확인 거르기가 닿는 것은 **포털이 모아 온 남의 시스템 줄**뿐이다.
- * 부른 사이트 자신의 줄은 애초에 이 목록에 없다(맨 위 `exceptClientId`).
+ * 둘이 한 칸에서 뭉개진다. 🔵 그래서 확인은 **제 칸**으로 간다. 얹는 자리를
+ * `withOwnAcknowledgements` 하나로 묶어 둔 까닭도 그것이다.
  */
 async function withoutAcknowledged(
-  userId: string,
-  feed: SiteDismissalFeed
-): Promise<SiteDismissalFeed> {
-  if (feed.items.length === 0) return feed;
+  params: { userId: string; clientId: string },
+  feed: SiteDismissalFeed,
+  own: PortalNotificationFeed
+): Promise<SiteNotificationFeed> {
+  // 🔴 `own.items` 도 함께 본다. 남의 줄이 하나도 없어도 **제 줄은 가려야 한다** —
+  //    이 조각이 메우려는 구멍([재고부족])이 바로 그 경우다.
+  if (feed.items.length === 0 && own.items.length === 0) {
+    return withOwnAcknowledgements(feed, []);
+  }
 
   try {
-    const digests = await listAcknowledgedDigests(userId);
-    if (digests.size === 0) return feed;
+    const digests = await listAcknowledgedDigests(params.userId);
+    if (digests.size === 0) return withOwnAcknowledgements(feed, []);
 
-    const purposes = await listKindPurposesByClient(sourceIdsOf(feed.items));
+    // 🔴 분류를 읽을 시스템에 **부른 사이트도 넣는다.** 빼면 그 사이트의 종류가
+    //    전부 「저장된 행이 없음」이 되어 기본값 `ACTION` 으로 떨어지고, 그러면
+    //    `acknowledged` 가 **언제나 비어** 이 조각이 통째로 동작하지 않는다.
+    const state = {
+      digests,
+      purposes: await listKindPurposesByClient(sourceIdsOf([...feed.items, ...own.items])),
+    };
+
     // 🔴 `dismissed` 를 그대로 다시 얹는다. applyAcknowledgements 는 칸 넷짜리
     //    feed 만 돌려주므로, 안 얹으면 그 칸이 **있다 없다 하게** 된다.
-    return { ...applyAcknowledgements(feed, { digests, purposes }), dismissed: feed.dismissed };
+    return withOwnAcknowledgements(
+      { ...applyAcknowledgements(feed, state), dismissed: feed.dismissed },
+      ownAcknowledgedKeys({ ownItems: own.items, state, clientId: params.clientId })
+    );
   } catch (error) {
     console.error("[notifications] 확인한 알림 목록을 읽지 못했습니다:", error);
     // 🔵 지움과 같은 판단이다 — 거르지 않은 것을 degraded 로 돌려준다. 확인해 둔
     //    줄이 다시 뜨는 쪽이 종이 통째로 꺼지는 것보다 낫다.
-    return { ...feed, degraded: true };
+    // 🔴 `acknowledged` 도 **빈 배열**이다. 기록을 못 읽었으니 「뺄 것이 없다」가
+    //    아니라 「모른다」인데, 모를 때 빼면 **아직 안 한 일이 안 보인다.**
+    return withOwnAcknowledgements({ ...feed, degraded: true }, []);
   }
 }
 
@@ -180,52 +263,74 @@ async function withoutAcknowledged(
  * 🔴 **거르기 한 벌 — 지움 다음에 확인이다.** 돌아가는 길 둘(캐시 적중·새로
  * 모음)에서 같은 한 줄을 부르려고 묶었다. 한 곳에서만 확인을 빠뜨리면 증상이
  * 「확인하면 한 번 사라졌다가 30초 동안 도로 뜬다」가 된다.
+ *
+ * ── 🔴 부른 사이트에게 못 물어봤으면 `degraded` 다 ─────────────────────────
+ * 그때 `acknowledged` 는 비어 나가고(위 withoutAcknowledged 와 같은 저울), 그
+ * 결과는 **확인해 둔 제 줄이 그 사이트 종에 다시 뜨는 것**이다. 조용히 넘어가면
+ * 증상이 「확인했는데 재고관리에서만 다시 뜬다」 하나뿐이라 원인을 가리키지
+ * 않는다 — 「알림이 없다」와 「못 물어봤다」를 나눠 그리는 것이 이 저장소의
+ * 규칙이다(merge.ts). 🔵 못 물어본 곳은 `sources` 에 없다. 부른 사이트는 애초에
+ * 거기 담기지 않기 때문이다 — `sources` 가 전부 `ok` 인데 `degraded` 가 참이면
+ * 그것은 **이 경우**다.
  */
 async function visibleTo(
   params: { userId: string; clientId: string },
-  feed: PortalNotificationFeed
-): Promise<SiteDismissalFeed> {
-  return withoutAcknowledged(params.userId, await withoutDismissed(params, feed));
+  pair: SiteFeedPair
+): Promise<SiteNotificationFeed> {
+  const feed = await withoutAcknowledged(
+    params,
+    await withoutDismissed(params, pair.others),
+    pair.own
+  );
+  // 🔵 새 객체다. 캐시에 든 것을 제자리에서 고치지 않는다(dismissals.ts 의 그 주석).
+  return pair.own.degraded ? { ...feed, degraded: true } : feed;
 }
 
 /**
  * 사이트에 내줄 「이 사람의 지금 알림」. **그 사람이 지운(✕) 줄과 확인한(✓) 줄은
- * 빠져 있고, 그 사이트 몫의 지운 열쇠가 `dismissed` 로 함께 간다.**
+ * 빠져 있고, 그 사이트 몫의 지운 열쇠가 `dismissed` 로, 확인한 열쇠가
+ * `acknowledged` 로 함께 간다.**
  *
- * 🔴 `dismissed` 에는 **지운 열쇠만** 담긴다 — 확인은 섞지 않는다(위
- * withoutAcknowledged 의 그 문단). 뜻이 다르고, 사이트가 제 알림을 확인으로
- * 거르는 길은 다음 조각이다.
+ * 🔴 **칸 둘은 섞이지 않는다.** `dismissed` 에는 지운 열쇠만, `acknowledged` 에는
+ * 확인한 열쇠만 담긴다. 수명이 정반대라서다 — 지움은 로그아웃하면 돌아오고 확인은
+ * 안 돌아온다(위 withoutAcknowledged 의 그 문단, own-acknowledgements.ts 머리말).
  *
  * 🔴 **던지지 않는다.** 이 값을 기다리는 것은 남의 사이트의 layout 이다 —
  * 여기서 터지면 그 사이트의 화면이 통째로 안 뜬다(설계서 F-8 의 그 줄이
  * 한 칸 더 밖으로 나온 자리다).
  *
  * ── 🔴 늘어난 칸이 어디서 붙는가 ───────────────────────────────────────────
- * **여기다.** 응답 규격(docs/사이트-알림-통로.md)에 칸 하나가 는 것이 이 반환
- * 타입 하나로 정해진다 — 라우트는 이 값을 그대로 직렬화하고(route.ts 의 마지막
- * 줄), site-feed.ts 의 `feedFor` 는 반환 타입이 `PortalNotificationFeed` 라도
- * 칸이 더 붙은 객체를 그대로 통과시킨다. 🔴 **그래서 site-feed.ts 는 고치지
- * 않았다** — 보안 판정(문 여섯)이 든 파일이라 열 이유가 없는 변경이었다.
+ * **여기다.** 응답 규격(docs/사이트-알림-통로.md)에 칸이 느는 것이 이 반환 타입
+ * 하나로 정해진다 — 라우트는 이 값을 그대로 직렬화하고(route.ts 의 마지막 줄),
+ * site-feed.ts 의 `feedFor` 는 반환 타입이 `PortalNotificationFeed` 라도 칸이 더
+ * 붙은 객체를 그대로 통과시킨다. 🔴 **그래서 site-feed.ts 는 거의 고치지 않았다**
+ * — 보안 판정(문 여섯)이 든 파일이라 열 이유가 없다. `feedFor` 곁의 주석 한 줄만
+ * 고쳤다(「묻지 않는다」가 더 이상 참이 아니라서다 — 맨 위 ⚠️ 문단).
  *
  * ── 🔴 돌아가는 길이 셋이고, 거를 곳은 둘이다 ─────────────────────────────
  *  ① 캐시 적중  — 🔴 **여기도 거른다.** 빠뜨리기 가장 쉬운 자리이고, 빠뜨리면
  *     증상이 「지우면 한 번 사라졌다가 30초 동안 도로 뜬다」가 된다.
  *  ② 새로 모음  — 거르지 않은 것을 캐시에 넣은 **뒤에** 거른다.
- *  ③ 모으기 실패 — 빈 목록이라 거를 것이 없다. 🔵 그래도 `dismissed` 칸은
- *     있어야 한다. 칸이 **있다 없다 하면** 사이트가 그 갈래를 따로 들어야 한다.
+ *  ③ 모으기 실패 — 빈 목록이라 거를 것이 없다. 🔵 그래도 `dismissed`·
+ *     `acknowledged` 두 칸은 있어야 한다. 칸이 **있다 없다 하면** 사이트가 그
+ *     갈래를 따로 들어야 한다. 🔴 둘 다 **빈 배열**이다 — 여기서는 지운 것도
+ *     확인한 것도 **모르는** 상태인데, 모를 때 빼면 아직 안 한 일이 안 보인다.
  */
 export async function getSiteNotificationFeed(params: {
   userId: string;
-  /** 🔴 부른 사이트. 이 시스템에는 묻지 않는다. */
+  /**
+   * 🔴 부른 사이트. **이 시스템의 알림은 내주지 않는다.**
+   * (🔵 확인 열쇠를 가리려고 묻기는 한다 — 맨 위 ⚠️ 문단.)
+   */
   exceptClientId: string;
-}): Promise<SiteDismissalFeed> {
+}): Promise<SiteNotificationFeed> {
   const key = siteFeedCacheKey(params.exceptClientId, params.userId);
   const dismissalParams = { userId: params.userId, clientId: params.exceptClientId };
 
   const cached = siteFeedCache.get(key, Date.now());
   if (cached) return visibleTo(dismissalParams, cached); // ①
 
-  let feed: PortalNotificationFeed;
+  let pair: SiteFeedPair;
   try {
     const { sources, skipped } = toNotificationSources(await listAccessibleClients(params.userId));
     for (const row of skipped) {
@@ -234,18 +339,40 @@ export async function getSiteNotificationFeed(params: {
       );
     }
 
-    feed = await gatherNotifications({
-      // 🔴 **거르고 나서** 묻는다. 받아 온 뒤에 빼면 늦다 — 그때는 이미
-      // 되돌기(포털 → 부른 사이트)가 일어난 뒤다.
-      sources: sources.filter((source) => source.clientId !== params.exceptClientId),
-      signToken: signerFor(params.userId),
-    });
+    const signToken = signerFor(params.userId);
+    // 🔴 부른 사이트의 통로. **없을 수 있다** — 알림을 내지 않는 시스템
+    //    (계측기·PO)이 부르는 경우다. 그때는 빈 목록으로 묻고, 가릴 것도 없다.
+    const ownSource = sources.find((source) => source.clientId === params.exceptClientId);
+
+    // 🔴 **둘을 동시에 묻는다.** 차례로 물으면 기다리는 시간이 합이 되는데,
+    //    gather.ts 가 이미 `Promise.all` 로 도는 덕에 여기서도 묶어 두면 「가장
+    //    느린 한 곳」만큼이다(맨 위 왕복 문단의 그 실측).
+    const [others, own] = await Promise.all([
+      gatherNotifications({
+        // 🔴 **내줄 목록에서는 부른 사이트를 뺀다.** 맨 위 네 까닭 그대로다.
+        sources: sources.filter((source) => source.clientId !== params.exceptClientId),
+        signToken,
+      }),
+      gatherNotifications({
+        // 🔴 **받아 온 줄은 내주지 않는다.** 확인(✓) 열쇠를 가리는 데만 쓴다.
+        sources: ownSource ? [ownSource] : [],
+        signToken,
+      }),
+    ]);
+    pair = { others, own };
   } catch (error) {
     console.error("[notifications] 사이트에 내줄 알림을 모으지 못했습니다:", error);
-    return { ...emptyFeed(), degraded: true, dismissed: [] }; // ③
+    return withOwnAcknowledgements({ ...emptyFeed(), degraded: true, dismissed: [] }, []); // ③
   }
 
-  // ② 🔴 캐시에 들어가는 것은 **거르지 않은** feed 다.
-  siteFeedCache.set(key, feed, Date.now(), feed.degraded ? DEGRADED_TTL_MS : undefined);
-  return visibleTo(dismissalParams, feed);
+  // ② 🔴 캐시에 들어가는 것은 **거르지 않은** 한 벌이다.
+  // 🔵 부른 사이트에게 못 물어본 것도 **짧게** 들고 있는다 — 그래야 저쪽이 살아난
+  //    5초 뒤에 확인 가리기가 되돌아온다(길게 들면 30초 동안 안 된다).
+  siteFeedCache.set(
+    key,
+    pair,
+    Date.now(),
+    pair.others.degraded || pair.own.degraded ? DEGRADED_TTL_MS : undefined
+  );
+  return visibleTo(dismissalParams, pair);
 }

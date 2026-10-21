@@ -179,7 +179,13 @@ export type SiteRequestDeps<C extends { clientId: string }> = {
  * 위 주석이 막으려던 그 갈라짐이 타입에서부터 시작된다.
  */
 export type SiteFeedDeps<C extends { clientId: string }> = SiteRequestDeps<C> & {
-  /** 합쳐진 알림. `exceptClientId` 시스템에는 **묻지 않는다.** */
+  /**
+   * 합쳐진 알림. `exceptClientId` 시스템의 알림은 **담기지 않는다.**
+   *
+   * 🔵 2026-10-22 부터 포털은 그 시스템에도 **묻기는 한다** — 받아 온 줄은 내주지
+   * 않고 확인(✓) 열쇠를 가리는 데만 쓴다(site-service.ts 맨 위의 ⚠️ 문단).
+   * 이 통로가 내주는 모양은 그대로다.
+   */
   feedFor(params: { userId: string; exceptClientId: string }): Promise<PortalNotificationFeed>;
 };
 
