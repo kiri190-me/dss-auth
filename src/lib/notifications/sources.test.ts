@@ -109,14 +109,43 @@ test("🔴 재고 관리(dss-inventory)에도 묻는다 — 통로를 연 다섯
   );
 });
 
-test("🔴 통로를 가진 시스템은 다섯이고, 저마다 두 경로를 다 갖는다", () => {
-  // 하나라도 빠지면 타입이 막아 주지만, 「등록은 했는데 다섯째를 빠뜨렸다」는
+test("🔴 RF 이슈관리(dss-rf-trouble)에도 묻는다 — 통로를 연 여섯째 시스템이다", () => {
+  // 2026-10-22. 🔴 열쇠는 `clients.client_id` 이고 **저장소 이름과 다르다**
+  // (저장소는 `dss-trouble`). 그 값이 곧 토큰의 aud 가 되므로 한 글자라도
+  // 어긋나면 저쪽이 401 로 거절하고, 증상은 「RF 알림이 안 온다」 하나뿐이다.
+  // 🔴 이 목록에 없으면 **부르러 가지도 않아** 로그조차 남지 않는다.
+  const { sources } = toNotificationSources([
+    tile({
+      clientId: "dss-rf-trouble",
+      name: "DSS RF 이슈관리",
+      launcherUrl: "http://192.168.0.12:7331/",
+    }),
+  ]);
+  assert.deepEqual(
+    sources.map((source) => source.clientId),
+    ["dss-rf-trouble"]
+  );
+  assert.equal(
+    sources[0].notificationsUrl,
+    "http://192.168.0.12:7331/api/integration/notifications"
+  );
+  // 🔴 설정 통로도 함께 열려 있어야 한다. 저쪽은 이 조각에서 그 주소를 열었고,
+  // 역할도 종류도 빈 표를 내준다 — 제 알림이 아직 없으니 그것이 사실이다.
+  assert.equal(
+    sources[0].settingsUrl,
+    "http://192.168.0.12:7331/api/integration/notification-settings"
+  );
+});
+
+test("🔴 통로를 가진 시스템은 여섯이고, 저마다 두 경로를 다 갖는다", () => {
+  // 하나라도 빠지면 타입이 막아 주지만, 「등록은 했는데 여섯째를 빠뜨렸다」는
   // 타입이 잡지 못한다. 개수를 여기서 못 박는다.
   assert.deepEqual(Object.keys(NOTIFICATION_SOURCE_PATHS).sort(), [
     "dss-board",
     "dss-improvements",
     "dss-inventory",
     "dss-leave",
+    "dss-rf-trouble",
     "rf-service-system",
   ]);
   for (const [clientId, paths] of Object.entries(NOTIFICATION_SOURCE_PATHS)) {

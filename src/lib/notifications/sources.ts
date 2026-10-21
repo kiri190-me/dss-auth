@@ -12,8 +12,14 @@ import type { ClientTile } from "@/lib/db/queries/clients";
  *     같은 규칙). 판정이 두 벌이 되면 「타일에는 없는데 알림은 오는」 시스템이
  *     생기고, 그건 곧 접근 권한이 없는 시스템에 그 사람의 존재를 알리는 일이다.
  *
- *  2. **알림 통로를 가진 시스템** — 지금은 A/S · 휴가 관리 · 개선요청 · 사내
- *     게시판 **넷**이다. 계측기·PO 에는 알림이 아예 없다.
+ *  2. **알림 통로를 가진 시스템** — 아래 NOTIFICATION_SOURCE_PATHS 에 열쇠가
+ *     적힌 시스템들이다. 거기 없는 시스템에는 알림 통로가 없다(물어 봐야 404 다).
+ *     🔴 **여기에 그 이름들을 또 적지 않는다.** 같은 목록이 두 벌이 되면 한쪽은
+ *     조용히 낡고, 이 줄이 실제로 두 번 낡았다 — 다섯째·여섯째가 붙는 동안
+ *     「넷」에 멈춰 있었다. 틀려도 아무것도 깨지지 않아 아무도 못 본다.
+ *     **목록은 그 상수가 말하고, 빠뜨림은 그 시험이 잡는다**(sources.test.ts 의
+ *     「통로를 가진 시스템은 …이고, 저마다 두 경로를 다 갖는다」 — 그 시험은
+ *     상수와 어긋나는 순간 깨진다).
  *
  * ── 🔴 2번을 왜 표(schema)가 아니라 여기 상수로 두는가 ──────────────────────
  * `backchannel_logout_uri` 가 이미 같은 일을 칸 하나로 하고 있고, 그쪽이 결국
@@ -134,6 +140,32 @@ export const NOTIFICATION_SOURCE_PATHS: Readonly<Record<string, NotificationSour
    * 7일 뒤 사라지는 것도 저쪽 규칙이다(그쪽 notifications/bell-items.ts).
    */
   "dss-inventory": {
+    notifications: "/api/integration/notifications",
+    settings: "/api/integration/notification-settings",
+  },
+  /**
+   * RF 이슈관리 — 2026-10-22 붙었다(여섯째). 🔴 열쇠는 `dss-rf-trouble` 이다.
+   * 저장소 이름(`dss-trouble`)과 다르다 — 이 열쇠는 `clients.client_id` 이고,
+   * 그 값이 곧 토큰의 aud 가 된다.
+   *
+   * 🔴 **지금 이 시스템에는 제 알림이 없다.** 알림 통로는 200 과 빈 목록으로
+   * 답한다. 그래도 등록하는 까닭은 통로가 **이미 열려 있기** 때문이다 — 제
+   * 알림이 생기는 날 이 상수를 다시 고치지 않아도 그날부터 종에 뜬다. 빈
+   * 목록은 고장이 아니다(아래 gather.ts 의 그 주석).
+   *
+   * 🔴 **설정 통로는 이 조각에서 함께 열었다**(저쪽 tools/portal.js 의
+   * NOTIFICATION_SETTINGS_PATH). 그 집은 알림 통로만 열어 두고 있었는데, 등록만
+   * 하면 포털이 두드리는 설정 주소가 404 가 되고 404 는 「죽었다」와 구별되지
+   * 않아 [알림 설정] 화면에 경고가 뜬다. 멀쩡한 시스템이 고장으로 보인다.
+   * 저쪽이 내주는 것은 **역할도 종류도 빈 표**이고(끌 알림이 없으니 사실이다),
+   * 저장은 403 으로 거절한다 — 다른 넷과 같은 모양이다.
+   *
+   * 🔴 **개수로 「표로 옮기자」를 다시 꺼내지 않는다**(위 「다섯째를 붙이는
+   * 사람에게」). 여섯이 된 지금도 세 조건은 하나도 사실이 아니다 — 여섯이 같은
+   * 두 경로를 쓰고, 하위 경로 배치는 아직 없으며, 포털은 그대로 다시 배포할 수
+   * 있다.
+   */
+  "dss-rf-trouble": {
     notifications: "/api/integration/notifications",
     settings: "/api/integration/notification-settings",
   },
