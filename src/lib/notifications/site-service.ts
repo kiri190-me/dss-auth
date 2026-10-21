@@ -2,8 +2,11 @@ import "server-only";
 import { getIssuer } from "@/lib/config/env";
 import { getSigningKey } from "@/lib/crypto/keys";
 import { listAccessibleClients } from "@/lib/db/queries/clients";
+import { listAcknowledgedDigests } from "@/lib/db/queries/notification-acknowledgements";
 import { listDismissedKeys } from "@/lib/db/queries/notification-dismissals";
+import { listKindPurposesByClient } from "@/lib/db/queries/notification-kind-purposes";
 import { signPortalServiceToken } from "@/lib/oidc/service-token";
+import { applyAcknowledgements, sourceIdsOf } from "./acknowledgements";
 import { createUserCache } from "./cache";
 import { applySiteDismissals, type SiteDismissalFeed } from "./dismissals";
 import { gatherNotifications, type SignServiceToken } from "./gather";
@@ -137,8 +140,61 @@ async function withoutDismissed(
 }
 
 /**
- * 사이트에 내줄 「이 사람의 지금 알림」. **그 사람이 지운 줄은 빠져 있고,
- * 그 사이트 몫의 지운 열쇠가 `dismissed` 로 함께 간다.**
+ * 🔴 **「해소됐다」고 확인한 줄을 뺀다.** service.ts 의 `withoutAcknowledged` 와
+ * **같은 판단이고 다른 반환 모양**이다 — 까닭은 이 파일의 다른 베낌들과 같다
+ * (저쪽은 `PortalNotificationFeed`, 여기는 칸이 하나 더 붙은 `SiteDismissalFeed`).
+ * 거르는 **계산 자체**는 두 벌이 아니다 — 둘 다 acknowledgements.ts 로 수렴한다.
+ *
+ * ── 🔴 `dismissed` 칸에는 손대지 않는다 ───────────────────────────────────
+ * 그 칸은 **지운(✕) 열쇠**를 사이트에 넘겨 주는 자리다. 확인한 열쇠를 거기 섞으면
+ * 사이트가 그것을 지움으로 읽어 **제 목록에서 영구히 빼 버린다** — 뜻이 다른
+ * 둘이 한 칸에서 뭉개진다. 🔵 사이트가 제 알림을 확인으로 거르는 길은 **다음
+ * 조각**이다(이 조각은 포털이 받을 준비까지다). 그때 칸을 하나 더 내면 된다.
+ *
+ * 🔵 그래서 확인 거르기가 닿는 것은 **포털이 모아 온 남의 시스템 줄**뿐이다.
+ * 부른 사이트 자신의 줄은 애초에 이 목록에 없다(맨 위 `exceptClientId`).
+ */
+async function withoutAcknowledged(
+  userId: string,
+  feed: SiteDismissalFeed
+): Promise<SiteDismissalFeed> {
+  if (feed.items.length === 0) return feed;
+
+  try {
+    const digests = await listAcknowledgedDigests(userId);
+    if (digests.size === 0) return feed;
+
+    const purposes = await listKindPurposesByClient(sourceIdsOf(feed.items));
+    // 🔴 `dismissed` 를 그대로 다시 얹는다. applyAcknowledgements 는 칸 넷짜리
+    //    feed 만 돌려주므로, 안 얹으면 그 칸이 **있다 없다 하게** 된다.
+    return { ...applyAcknowledgements(feed, { digests, purposes }), dismissed: feed.dismissed };
+  } catch (error) {
+    console.error("[notifications] 확인한 알림 목록을 읽지 못했습니다:", error);
+    // 🔵 지움과 같은 판단이다 — 거르지 않은 것을 degraded 로 돌려준다. 확인해 둔
+    //    줄이 다시 뜨는 쪽이 종이 통째로 꺼지는 것보다 낫다.
+    return { ...feed, degraded: true };
+  }
+}
+
+/**
+ * 🔴 **거르기 한 벌 — 지움 다음에 확인이다.** 돌아가는 길 둘(캐시 적중·새로
+ * 모음)에서 같은 한 줄을 부르려고 묶었다. 한 곳에서만 확인을 빠뜨리면 증상이
+ * 「확인하면 한 번 사라졌다가 30초 동안 도로 뜬다」가 된다.
+ */
+async function visibleTo(
+  params: { userId: string; clientId: string },
+  feed: PortalNotificationFeed
+): Promise<SiteDismissalFeed> {
+  return withoutAcknowledged(params.userId, await withoutDismissed(params, feed));
+}
+
+/**
+ * 사이트에 내줄 「이 사람의 지금 알림」. **그 사람이 지운(✕) 줄과 확인한(✓) 줄은
+ * 빠져 있고, 그 사이트 몫의 지운 열쇠가 `dismissed` 로 함께 간다.**
+ *
+ * 🔴 `dismissed` 에는 **지운 열쇠만** 담긴다 — 확인은 섞지 않는다(위
+ * withoutAcknowledged 의 그 문단). 뜻이 다르고, 사이트가 제 알림을 확인으로
+ * 거르는 길은 다음 조각이다.
  *
  * 🔴 **던지지 않는다.** 이 값을 기다리는 것은 남의 사이트의 layout 이다 —
  * 여기서 터지면 그 사이트의 화면이 통째로 안 뜬다(설계서 F-8 의 그 줄이
@@ -167,7 +223,7 @@ export async function getSiteNotificationFeed(params: {
   const dismissalParams = { userId: params.userId, clientId: params.exceptClientId };
 
   const cached = siteFeedCache.get(key, Date.now());
-  if (cached) return withoutDismissed(dismissalParams, cached); // ①
+  if (cached) return visibleTo(dismissalParams, cached); // ①
 
   let feed: PortalNotificationFeed;
   try {
@@ -191,5 +247,5 @@ export async function getSiteNotificationFeed(params: {
 
   // ② 🔴 캐시에 들어가는 것은 **거르지 않은** feed 다.
   siteFeedCache.set(key, feed, Date.now(), feed.degraded ? DEGRADED_TTL_MS : undefined);
-  return withoutDismissed(dismissalParams, feed);
+  return visibleTo(dismissalParams, feed);
 }

@@ -7,4 +7,5 @@ export * from "./authorization-codes";
 export * from "./access-tokens";
 export * from "./audit-logs";
 export * from "./notification-dismissals";
+export * from "./notification-acknowledgements";
 export * from "./notification-kind-purposes";

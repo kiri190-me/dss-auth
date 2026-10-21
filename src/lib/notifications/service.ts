@@ -2,8 +2,11 @@ import "server-only";
 import { getIssuer } from "@/lib/config/env";
 import { getSigningKey } from "@/lib/crypto/keys";
 import { listAccessibleClients } from "@/lib/db/queries/clients";
+import { listAcknowledgedDigests } from "@/lib/db/queries/notification-acknowledgements";
 import { listDismissedKeys } from "@/lib/db/queries/notification-dismissals";
+import { listKindPurposesByClient } from "@/lib/db/queries/notification-kind-purposes";
 import { signPortalServiceToken } from "@/lib/oidc/service-token";
+import { applyAcknowledgements, sourceIdsOf } from "./acknowledgements";
 import { createUserCache } from "./cache";
 import { applyDismissals } from "./dismissals";
 import {
@@ -171,7 +174,71 @@ async function withoutDismissed(
 }
 
 /**
- * 「이 사람의 지금 알림」 — 통합 종이 그릴 전부. **그 사람이 지운 줄은 빠져 있다.**
+ * 🔴 **「해소됐다」고 확인한 줄을 뺀다 — ✕ 지움과 다른 일이다.**
+ *
+ * 지움은 「지금은 그만 보겠다」라 로그아웃하면 돌아오고, 확인은 돌아오지 않는다.
+ * 그래서 표도 다르고(db/schema/notification-acknowledgements.ts) 거르는 조건도
+ * 다르다 — 확인은 **셋이 모두** 맞아야 거른다(기록이 있고 · 내용이 그때와 같고 ·
+ * 분류가 `INFO` 다). 판단 전부는 acknowledgements.ts 에 순수 함수로 있다.
+ *
+ * 🔴 **지움 거르기 바로 옆, 캐시 바깥이다.** 위 withoutDismissed 와 같은 자리에
+ * 같은 모양으로 둔다 — 한쪽만 캐시 안으로 들어가면 두 거르기가 서로 다른 나이의
+ * 목록을 본다. 그리고 분류를 캐시에 넣지 않는 까닭은 저쪽(queries/
+ * notification-kind-purposes.ts)에 적었다: 관리자가 분류를 바꾸면 **즉시** 먹어야
+ * 한다.
+ *
+ * ── 왕복을 아끼는 두 줄 ───────────────────────────────────────────────────
+ * 🔵 줄이 하나도 없으면 아무것도 묻지 않는다. 🔵 확인 기록이 한 줄도 없으면
+ * **분류도 묻지 않는다** — 거를 것이 없는데 분류를 읽어 봐야 쓸 데가 없다.
+ * 사내 대부분의 사람이 이 두 갈래로 빠지므로 평소 왕복은 하나다.
+ *
+ * ── 🔴 못 읽으면 — 지움과 같은 판단이다 ───────────────────────────────────
+ * **거르지 않은 feed 를 `degraded: true` 로 돌려준다.** 종을 통째로 끄면 알림이
+ * 아예 안 보인다. 확인해 둔 줄이 다시 뜨는 쪽이 덜 나쁘다 — 눈에 거슬릴 뿐 일을
+ * 놓치지 않는다. 🔴 그렇다고 조용히 넘어가지 않는다. 안 남기면 증상이 「확인했는데
+ * 다시 뜬다」 하나뿐이라 DB 를 의심할 단서가 없다.
+ */
+async function withoutAcknowledged(
+  userId: string,
+  feed: PortalNotificationFeed
+): Promise<PortalNotificationFeed> {
+  if (feed.items.length === 0) return feed;
+
+  try {
+    const digests = await listAcknowledgedDigests(userId);
+    if (digests.size === 0) return feed;
+
+    const purposes = await listKindPurposesByClient(sourceIdsOf(feed.items));
+    return applyAcknowledgements(feed, { digests, purposes });
+  } catch (error) {
+    console.error("[notifications] 확인한 알림 목록을 읽지 못했습니다:", error);
+    // 🔵 새 객체다. 캐시에 든 feed 를 제자리에서 고치면 그 사람의 다음 요청이
+    // 까닭 없이 degraded 로 나간다(위 withoutDismissed 와 같은 까닭).
+    return { ...feed, degraded: true };
+  }
+}
+
+/**
+ * 🔴 **거르기 한 벌 — 지움 다음에 확인이다.**
+ *
+ * 돌아가는 길마다 따로 적지 않고 여기 묶는 까닭: 거를 곳이 둘(캐시 적중·새로
+ * 모음)이고, **한 곳에서만 확인을 빠뜨리면** 증상이 「확인하면 한 번 사라졌다가
+ * 30초 동안 도로 뜬다」가 된다. 묶어 두면 빠뜨릴 자리가 없다.
+ *
+ * 🔵 차례는 둘 중 아무것이나 되지만 지움을 먼저 둔다 — 지움으로 이미 빠진 줄은
+ * 확인 쪽이 들여다볼 까닭이 없고, 그만큼 지문 계산이 준다.
+ */
+async function visibleTo(
+  userId: string,
+  feed: PortalNotificationFeed
+): Promise<PortalNotificationFeed> {
+  return withoutAcknowledged(userId, await withoutDismissed(userId, feed));
+}
+
+/**
+ * 「이 사람의 지금 알림」 — 통합 종이 그릴 전부. **그 사람이 지운(✕) 줄과
+ * 확인한(✓) 줄은 빠져 있다.** 둘은 다른 일이다 — 지움은 로그아웃하면 돌아오고
+ * 확인은 안 돌아온다(위 withoutAcknowledged).
  *
  * 🔴 **던지지 않는다.** 종이 통째로 안 뜨는 것이 가장 나쁘다(설계서 F-8).
  * DB 조회까지 실패하면 빈 목록에 degraded 만 세워 돌려준다 — 「알림이 없다」와
@@ -182,6 +249,9 @@ async function withoutDismissed(
  *     증상이 「지우면 한 번 사라졌다가 30초 동안 도로 뜬다」가 된다.
  *  ② 새로 모음  — 거르지 않은 것을 캐시에 넣은 **뒤에** 거른다(위 주석).
  *  ③ 모으기 실패 — 빈 목록이라 거를 것이 없다. 그대로 둔다.
+ *
+ * 🔵 ①·② 둘 다 `visibleTo` 한 줄이다 — 지움과 확인을 따로 적으면 한쪽 길에서만
+ * 한쪽 거르기를 빠뜨릴 수 있다.
  *
  * ── 🔴 알림을 다 지우면 `/apps` 타일의 빨간 점도 사라진다 — 의도한 동작이다 ──
  * **2026-10-20 사용자 결정.** 앱 런처(`src/app/apps/page.tsx`)가 같은 이 함수를
@@ -195,7 +265,7 @@ async function withoutDismissed(
  */
 export async function getNotificationFeed(userId: string): Promise<PortalNotificationFeed> {
   const cached = feedCache.get(userId, Date.now());
-  if (cached) return withoutDismissed(userId, cached); // ①
+  if (cached) return visibleTo(userId, cached); // ①
 
   let feed: PortalNotificationFeed;
   try {
@@ -210,7 +280,7 @@ export async function getNotificationFeed(userId: string): Promise<PortalNotific
 
   // ② 🔴 캐시에 들어가는 것은 **거르지 않은** feed 다.
   feedCache.set(userId, feed, Date.now(), feed.degraded ? DEGRADED_TTL_MS : undefined);
-  return withoutDismissed(userId, feed);
+  return visibleTo(userId, feed);
 }
 
 /**
