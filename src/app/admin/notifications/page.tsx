@@ -1,5 +1,14 @@
 import type { Metadata } from "next";
 import { requirePortalAdmin } from "@/lib/auth/portal-admin";
+import { listKindPurposes } from "@/lib/db/queries/notification-kind-purposes";
+import {
+  DEFAULT_NOTIFICATION_PURPOSE,
+  NOTIFICATION_PURPOSES,
+  NOTIFICATION_PURPOSE_LABELS,
+  purposeFieldName,
+  purposeOf,
+  type NotificationPurpose,
+} from "@/lib/notifications/purposes";
 import { getNotificationSettings } from "@/lib/notifications/service";
 import type {
   PortalSettingsKind,
@@ -61,6 +70,18 @@ export const metadata: Metadata = { title: "알림 설정 | DSS 통합 로그인
  * 확실하지 않은 것을 화면에 단언으로 적지 않는다 — 대신 맨 아래에 「알림 통로를
  * 연 시스템만 나온다」고 한 줄 적어 둔다. 빈 화면을 보고 고장으로 오해하는 것만
  * 막으면 충분하다.
+ *
+ * ── 🔴 「분류」 칸 하나만은 포털이 갖는다 (2026-10-21) ────────────────────────
+ * 위 「값의 주인은 각 시스템이다」에 예외가 하나 생겼다. 알림 통로를 연 다섯
+ * 가운데 **설정을 실제로 바꿀 수 있는 곳은 A/S 하나뿐**이고, 나머지 넷은 모든
+ * 칸이 `editable: false` 이며 저장을 403 으로 거절한다. 분류까지 저쪽에 맡기면
+ * 그 넷은 영영 고칠 수 없다 — 그래서 이 값만 포털 DB 에 둔다
+ * (db/schema/notification-kind-purposes.ts 에 까닭이 길게 적혀 있다).
+ *
+ * 🔴 그 결과가 화면에서 하나로 드러난다: **분류 고르개는 어떤 시스템에서도,
+ * 사용을 끈 줄에서도 잠기지 않는다.** 역할 칸을 잠그는 두 조건(`!role.editable`
+ * ·`shown.rolesLocked`)을 따라 하지 마라 — 그 둘은 「저쪽이 못 바꾸게 했다」와
+ * 「저쪽에 보내 봐야 소용없다」인데, 이 값은 저쪽으로 가지 않는다.
  * ============================================================================
  */
 
@@ -72,6 +93,14 @@ const NOTE = "text-xs text-zinc-500";
 
 /** 이 화면의 주소. 저장 액션도 같은 곳으로 돌아온다. */
 const PATH = "/admin/notifications";
+
+/**
+ * 표를 못 그리는 구역(forbidden·unavailable)에 넘길 빈 분류.
+ *
+ * 🔵 상수인 까닭: 그릴 때마다 `new Map()` 을 만들면 그 구역이 다시 그려질 때마다
+ * 값이 달라진 것처럼 보인다. 어차피 비어 있고 아무도 고치지 않는다.
+ */
+const NO_PURPOSES: ReadonlyMap<string, NotificationPurpose> = new Map();
 
 /** 시스템 구역의 닻. 링크로 돌아왔을 때 그 표가 바로 보이게 한다. */
 function blockId(clientId: string): string {
@@ -167,23 +196,80 @@ function RoleCell({
   );
 }
 
+/**
+ * 종류 하나의 「분류」 칸.
+ *
+ * 🔴 **잠기는 조건이 없다.** 옆의 RoleCell 과 다른 점이고, 이 칸을 더한 이득이
+ * 바로 그것이다(이 파일 머리말) — 저쪽이 설정을 잠가 둔 시스템에서도, 사용을 끈
+ * 줄에서도 분류는 고칠 수 있다. 끈 종류가 역할 설정을 그대로 안고 기다리는 것과
+ * 같은 성질이다(표 아래 설명문).
+ */
+function PurposeCell({
+  row,
+  purpose,
+}: {
+  row: PortalSettingsKind;
+  purpose: NotificationPurpose;
+}) {
+  return (
+    <td className="px-2 py-2 text-center">
+      {/*
+        🔴 <select> 다. 이 화면은 자바스크립트 없이 도는 평범한 폼이라(머리말)
+        고르개도 HTML 만으로 되는 것을 쓴다. `defaultValue` 로 지금 값을 그리고,
+        「되돌리기」는 브라우저의 폼 초기화가 그대로 해 준다.
+      */}
+      <select
+        name={purposeFieldName(row.kind)}
+        defaultValue={purpose}
+        aria-label={`${row.label} 분류`}
+        className="rounded-md border border-zinc-300 bg-white px-1.5 py-1 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+      >
+        {NOTIFICATION_PURPOSES.map((value) => (
+          <option key={value} value={value}>
+            {NOTIFICATION_PURPOSE_LABELS[value]}
+          </option>
+        ))}
+      </select>
+    </td>
+  );
+}
+
 /** 설정을 읽어 온 시스템 하나의 표. */
 function SystemTable({
   system,
+  purposes,
   showDefaults,
 }: {
   system: Extract<PortalSettingsSystem, { status: "ok" }>;
+  /** 🔴 포털 DB 에 저장된 분류. 행이 없는 종류는 여기에도 없다(purposeOf 가 채운다). */
+  purposes: ReadonlyMap<string, NotificationPurpose>;
   showDefaults: boolean;
 }) {
   if (system.kinds.length === 0) {
     return <p className={`mt-3 ${NOTE}`}>이 시스템이 내주는 알림 종류가 없습니다.</p>;
   }
 
-  const rows = system.kinds.map((row) => ({
-    row,
-    shown: shownKindState({ row, roles: system.roles, showDefaults }),
-  }));
-  const differentCount = rows.filter((entry) => entry.shown.differsFromStored).length;
+  const rows = system.kinds.map((row) => {
+    const stored = purposeOf(purposes, row.kind);
+    /*
+      🔴 「전부 기본값으로」는 분류도 따라간다 — 분류의 기본값은 ACTION(승인용)
+      이다. 그 링크의 글자가 「전부」이므로 한 칸만 남겨 두면 거짓말이 되고,
+      기본값이 안전한 쪽이라 따라가도 알림을 놓치는 방향으로는 가지 않는다
+      (purposes.ts 의 「모르면 남긴다」).
+    */
+    const purpose = showDefaults ? DEFAULT_NOTIFICATION_PURPOSE : stored;
+    return {
+      row,
+      purpose,
+      shown: shownKindState({ row, roles: system.roles, showDefaults }),
+      // 🔴 분류도 「저장을 누르면 바뀌는 줄」에 센다. 안 세면 분류만 달라진 줄이
+      // 색 없이 남고, 아래 안내문의 숫자가 실제로 바뀔 줄보다 적어진다.
+      purposeDiffers: purpose !== stored,
+    };
+  });
+  const differentCount = rows.filter(
+    (entry) => entry.shown.differsFromStored || entry.purposeDiffers
+  ).length;
 
   return (
     /*
@@ -222,6 +308,14 @@ function SystemTable({
               <th scope="col" className="px-2 py-1 text-center font-medium">
                 사용
               </th>
+              {/*
+                🔴 「사용」 다음, 역할 앞이다. 사용과 분류는 **그 종류 자체의
+                성질**이고 역할은 그 뒤에 오는 것이라서다. 역할 칸들 사이에 끼면
+                역할 하나로 읽힌다.
+              */}
+              <th scope="col" className="px-2 py-1 text-center font-medium">
+                분류
+              </th>
               {/* 🔴 역할 머리는 받은 글자 그대로다. 포털에 번역표가 없다. */}
               {system.roles.map((role) => (
                 <th key={role.code} scope="col" className="px-2 py-1 text-center font-medium">
@@ -231,13 +325,15 @@ function SystemTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ row, shown }) => (
+            {rows.map(({ row, shown, purpose, purposeDiffers }) => (
               <tr
                 key={row.kind}
                 className={`border-t border-zinc-200 align-top dark:border-zinc-800 ${
                   // 저장을 누르면 바뀌는 줄. 지금은 「전부 기본값으로」를 누른
                   // 뒤에만 생긴다 — 평소에는 화면 값이 곧 저장된 값이다.
-                  shown.differsFromStored ? "bg-blue-50/60 dark:bg-blue-950/20" : ""
+                  shown.differsFromStored || purposeDiffers
+                    ? "bg-blue-50/60 dark:bg-blue-950/20"
+                    : ""
                 }`}
               >
                 <th scope="row" className="py-2 pr-3 text-left font-normal">
@@ -306,6 +402,8 @@ function SystemTable({
                   )}
                 </td>
 
+                <PurposeCell row={row} purpose={purpose} />
+
                 {system.roles.map((role) => (
                   <RoleCell key={role.code} row={row} role={role} shown={shown} />
                 ))}
@@ -321,6 +419,20 @@ function SystemTable({
         「사용」을 끄는 것과 역할을 전부 지우는 것은 다릅니다 — 끈 종류는 역할 설정을
         그대로 안고 기다리다가 다시 켜는 순간 돌아옵니다. 사용을 끈 종류는 역할 칸이
         잠깁니다.
+      </p>
+
+      {/*
+        🔴 「지금 그렇게 동작한다」고 적지 않는다. 저장된 분류를 읽어 종이 달라지는
+        것은 **다음 조각**이고, 화면이 거짓말을 하면 안 된다. 그래서 뜻만 적고
+        동작은 앞으로의 일로 쓴다.
+      */}
+      <p className={`mt-2 ${NOTE}`}>
+        <strong className="font-medium">분류</strong>는 그 알림의 성격을 적어 두는
+        칸입니다. 「정보 확인용」은 사람이 보고 확인하면 끝나는 알림, 「승인용」은 그
+        일이 실제로 처리되어야 끝나는 알림이라는 뜻입니다 — 앞으로 종이 알림을 언제까지
+        들고 있을지를 이 값으로 정하게 됩니다. 이 값만은{" "}
+        <strong className="font-medium">포털이 가지고 있어</strong>, 다른 칸이 잠긴
+        시스템에서도 고칠 수 있습니다.
       </p>
 
       {showDefaults ? (
@@ -384,9 +496,11 @@ function SystemTable({
 /** 한 시스템 구역. 🔴 셋 가운데 둘은 고장이 아니라 답이다. */
 function SystemBlock({
   system,
+  purposes,
   showDefaults,
 }: {
   system: PortalSettingsSystem;
+  purposes: ReadonlyMap<string, NotificationPurpose>;
   showDefaults: boolean;
 }) {
   return (
@@ -397,7 +511,7 @@ function SystemBlock({
       </h2>
 
       {system.status === "ok" ? (
-        <SystemTable system={system} showDefaults={showDefaults} />
+        <SystemTable system={system} purposes={purposes} showDefaults={showDefaults} />
       ) : null}
 
       {system.status === "forbidden" ? (
@@ -445,6 +559,29 @@ export default async function AdminNotificationsPage({
   // status: "unavailable" 로 담겨 온다(notifications/service.ts).
   const overview = await getNotificationSettings(admin.userId);
 
+  /*
+    분류만은 포털 DB 에서 읽는다(이 파일 머리말). 🔵 **표를 그릴 수 있는 시스템만**
+    읽는다 — forbidden·unavailable 구역에는 표가 없어 그릴 칸도 없다.
+
+    🔴 시스템마다 한 번씩 묻는다. 한 문장으로 모을 수도 있지만 다섯 줄짜리 조회
+    다섯 번이고, 여는 사람이 관리자뿐이라 값이 싸다. 대신 저장 액션이 쓰는 조회와
+    **같은 함수 하나**를 쓰게 된다 — 읽는 길이 둘로 갈리면 화면에 보이는 값과
+    저장이 견주는 값이 어긋나는 날이 온다.
+
+    🔵 던지는 것을 막지 않는다. 포털 DB 가 죽었다면 이 화면은 애초에 뜨지 않는다
+    (requirePortalAdmin 이 같은 DB 를 먼저 읽는다).
+  */
+  const purposes = new Map(
+    await Promise.all(
+      overview.systems
+        .filter((system) => system.status === "ok")
+        .map(
+          async (system) =>
+            [system.clientId, await listKindPurposes(system.clientId)] as const
+        )
+    )
+  );
+
   return (
     <main className="pt-8">
       <h1 className="text-xl font-semibold">알림 설정</h1>
@@ -485,6 +622,7 @@ export default async function AdminNotificationsPage({
           <SystemBlock
             key={system.clientId}
             system={system}
+            purposes={purposes.get(system.clientId) ?? NO_PURPOSES}
             showDefaults={defaults === system.clientId}
           />
         ))
