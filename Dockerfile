@@ -7,6 +7,11 @@
 #   docker save dss-auth:1.0 -o dss-auth-1.0.tar
 #   (NAS에서) docker load -i dss-auth-1.0.tar
 #
+# 마이그레이션을 돌리는 도구 이미지는 따로 굽는다(아래 「곁가지」 스테이지):
+#
+#   docker build --target tools -t dss-auth-tools:1 .
+#   docker save dss-auth-tools:1 -o dss-auth-tools-1.tar
+#
 # 자세한 것은 ../dss-deploy/runbook/02-이미지-빌드.md
 
 # Next 16이 요구하는 최소 Node는 20.9다. LTS인 22를 쓴다.
@@ -47,6 +52,89 @@ ENV DATABASE_URL="postgresql://build:build@127.0.0.1:5432/build_time_only"
 
 # next.config.ts의 output: "standalone"이 .next/standalone을 만든다.
 RUN npm run build
+
+# ── 곁가지 : 마이그레이션을 돌리는 도구 이미지 ────────────────────────
+#
+# 운영 이미지(3단계)에서는 db:migrate를 부를 수 없다. 이유가 둘이다 —
+# drizzle-kit이 devDependency고, runner는 .next/standalone만 담아 node_modules도
+# drizzle/*.sql도 아예 없다. 이 스테이지가 그 자리를 맡는다.
+#
+#   docker build --target tools -t dss-auth-tools:1 .
+#
+# NAS에 이미 도는 여섯(tools-as · tools-meters · tools-improvements ·
+# tools-leave · tools-board · tools-inventory)과 같은 모양이다. 포털만 없어서
+# 2026-10-22 서른한째 배포에서 마이그레이션 셋(0005·0006·0007)을 돌릴 길이
+# 없었다 — 그것이 이 스테이지가 생긴 까닭이다.
+#
+# NAS에서는 compose의 `profiles: [tools]` 서비스 tools-auth로 두고, 부를 때만
+# 잠깐 떴다 사라진다(`run --rm`). 상시 서비스가 아니라 메모리 예산 밖이다.
+#
+# ⚠️ 이 스테이지를 runner 뒤로 옮기지 않는다. **마지막 스테이지가 `docker build`
+#    의 기본 대상**이라, 뒤에 두면 `--target` 없이 구운 이미지가 앱이 아니라
+#    도구가 된다 — 그 이미지는 `node server.js`를 모른다.
+#
+# 🔴 DATABASE_URL을 여기에 굽지 않는다. 2단계의 가짜 값은 별도 FROM이라 넘어오지
+#    않고, 그래야 맞다 — 여기는 **진짜** 주소를 받아야 하는 자리다. 없는 채로
+#    부르면 drizzle.config.ts가 바로 던진다(그게 맞는 동작이다). 운영에서는
+#    compose가 환경변수로 넣는다. 비밀번호가 이미지에 구워져 돌아다니면 안 된다.
+FROM ${NODE_IMAGE} AS tools
+WORKDIR /app
+ENV NODE_ENV=production TZ=Asia/Seoul
+
+# ⚠️ 소유자는 COPY할 때 정한다. 다 옮겨 놓고 `RUN chown -R /app`을 하면 그 한 줄이
+#    /app 전체를 새 레이어에 한 벌 더 복사한다 — 계측기 도구 이미지에서 실측
+#    1.86GB → 1.07GB.
+#
+# drizzle-kit은 devDependency다. deps는 `npm ci`를 NODE_ENV 없이 돌리므로 거기
+# node_modules에는 devDependency가 들어 있다 — 그래서 deps에서 가져온다.
+# drizzle.config.ts가 맨 윗줄에서 부르는 dotenv도 같은 이유로 거기에 있다
+# (컨테이너에 .env.local은 없다. dotenv는 파일이 없으면 조용히 지나가고,
+#  값은 환경변수에서 온다 — 그래서 이 조합이 맞는다).
+COPY --from=deps --chown=node:node /app/node_modules ./node_modules
+COPY --chown=node:node package.json tsconfig.json drizzle.config.ts ./
+
+# drizzle.config.ts의 schema가 ./src/lib/db/schema/index.ts를 가리킨다.
+#
+# ⚠️ 이 스테이지는 builder와 달리 `COPY . .`가 아니라 폴더를 골라 담는다. 그래서
+#    tsconfig.json의 paths가 가리키는 곳을 하나라도 빠뜨리면, 그 자리를 타는 순간
+#    「Cannot find module」로 죽는다. A/S에서 실제로 그랬다 — 스키마를
+#    vendor/dss-core로 옮기고 이 줄을 안 더해 8일간 도구 이미지가 전부 죽어
+#    있었는데 태그가 같아 눈으로는 구별이 안 됐다(2026-09-29).
+#    이 저장소의 paths는 `@/*` → ./src 하나뿐이고 vendor/ 서브모듈이 없다.
+# 🔴 나중에 코드를 서브모듈로 옮기면, 옮긴 곳이 여기 담기는지 먼저 본다.
+COPY --chown=node:node src ./src
+
+# 🔴 돌릴 마이그레이션 자체와 목록(meta/_journal.json). 목록에 없는 .sql은 안 돈다.
+#
+#    **이미지에 굽는다 — 볼륨으로 붙이지 않는다.** A/S만 볼륨
+#    (/volume1/dss/as-migrations)을 쓰는데, 거기는 drizzle/만 28MB라 배포마다
+#    이미지를 통째로 옮기는 값이 더 컸기 때문이다. 포털의 drizzle/는 292KB다.
+#    볼륨으로 하면 배포 때마다 사람이 파일을 올려야 하고, 빠뜨리면 오류가 아니라
+#    「마이그레이션 0건」으로 조용히 끝난다 — 그 값이 292KB보다 비싸다. 그래서
+#    개선요청·휴가·게시판·재고와 같은 쪽을 고른다.
+#    대신 **마이그레이션이 늘면 이 도구 이미지를 다시 구워 옮겨야 한다.**
+#
+# ⚠️ .dockerignore가 drizzle/을 막으면 이 줄이 빈 폴더를 담고, 역시 오류 없이
+#    0건으로 끝난다. 그 검사는 src/lib/tools-image.test.ts에 있다.
+COPY --chown=node:node drizzle ./drizzle
+
+# 비상구도 담는다. 포털은 **모든 사내 시스템의 로그인**이라 관리자가 잠기면
+# 되돌릴 다른 길이 없다 — create-emergency-admin.ts·promote-admin.ts가 그 길이고,
+# purge-expired.ts는 감사 로그 보관기간(3년)을 실제로 집행하는 유일한 코드다.
+# 비상구는 쓸 일이 생긴 뒤에 넣을 수 없으니 미리 담는다(184KB).
+#
+# ⚠️ 다만 package.json의 그 스크립트들은 아직 `node --env-file=.env.local`로
+#    적혀 있다. 컨테이너에 그 파일이 없으므로 `npm run admin:promote`는 그 줄에서
+#    죽는다. 컨테이너에는 환경변수가 이미 들어와 있으니 파일 없이 직접 부른다:
+#      … run --rm tools-auth node --import tsx scripts/promote-admin.ts
+#    (그 스크립트들을 --env-file-if-exists로 고치는 것은 별도 조각이다.)
+COPY --chown=node:node scripts ./scripts
+
+USER node
+
+# 기본값은 **아무것도 바꾸지 않는** 쪽으로 둔다. 적용은 명령을 적어 부른다:
+#   docker compose … --profile tools run --rm tools-auth npm run db:migrate
+CMD ["node", "-e", "console.log('db:migrate 를 명령으로 적어 부르세요.')"]
 
 # ── 3단계 : 실행에 필요한 것만 담는다 ─────────────────────────────────
 FROM ${NODE_IMAGE} AS runner
