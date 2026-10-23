@@ -70,13 +70,18 @@ export const approvalMailDeliveries = pgTable(
      */
     kind: text("kind").notNull(),
     /**
-     * `SENT`(보냈다) 또는 `FAILED`(보내려다 실패).
+     * `SENT`(보냈다) · `FAILED`(보내려다 실패) · `SENDING`(🔴 **지금 보내는 중**).
      *
      * 🔴 **CHECK 도 pgEnum 도 걸지 않았다** — `notification_kind_purposes.purpose`
      * 와 같은 판단이다. 값을 늘릴 때 마이그레이션이 깨지고, 제약이 없어도
      * 사고가 나지 않는다: 읽는 쪽이 **`SENT` 인 줄만** 「보냈다」로 세므로,
      * 모르는 글자는 「아직 안 보냈다」쪽으로 떨어진다. 그쪽이 안전하다 —
      * 메일이 한 번 더 갈 뿐, 놓치지는 않는다.
+     *
+     * 🔵 **2026-10-24 에 그 판단이 값을 치렀다.** 즉시 알림이 `SENDING` 을
+     * 더했는데(approvals/delivery-state.ts) 표는 한 줄도 안 고쳤다. 🔴 그 글자는
+     * **수명이 있다** — 수명이 지난 `SENDING` 은 다시 「아직 안 보냄」이 되어 주기
+     * 작업이 줍는다. 그래서 찍어 놓고 죽은 줄이 영영 남지 않는다.
      */
     status: text("status").notNull(),
     /**
@@ -110,8 +115,9 @@ export const approvalMailDeliveries = pgTable(
      *
      * 🔵 위 유일 색인은 `user_id` 로 시작하므로 **시각만으로 찾는 조회에는 쓸 수
      * 없다.** 사람이 신고를 들고 왔을 때 보는 것이 늘 「그 무렵에 무엇이
-     * 나갔나」라서 하나 더 둔다. 이 표는 쓰기가 하루 한 번뿐이라 색인 하나를
-     * 더 갱신하는 값이 사실상 없다.
+     * 나갔나」라서 하나 더 둔다. 🔵 2026-10-24 부터 이 표에는 **결재가 생길 때마다**
+     * 도 쓴다(즉시 알림 — approvals/notice-run.ts). 그래도 쓰기는 하루 수십 줄
+     * 수준이라 색인 하나를 더 갱신하는 값이 사실상 없다.
      */
     index("approval_mail_deliveries_sent_at_idx").on(table.sentAt),
   ]

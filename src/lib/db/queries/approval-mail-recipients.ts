@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { users } from "@/lib/db/schema";
 import type { ApprovalMailRecipient } from "@/lib/approvals/run";
@@ -32,4 +32,32 @@ export async function listApprovalMailRecipients(): Promise<ApprovalMailRecipien
     .orderBy(asc(users.displayName));
 
   return rows;
+}
+
+/**
+ * 결재 알림 메일의 대상 **한 사람** — 즉시 알림이 쓴다(approvals/notice-run.ts).
+ *
+ * 🔴 **위 목록과 같은 규칙이다**: `ACTIVE` 가 아니면 `null` 이고, 메일 주소가
+ * 없어도 **돌려준다**(거르는 일과 세는 일은 부르는 쪽 한 곳에서 한다). 둘이
+ * 어긋나면 「주기 작업으로는 오는데 즉시로는 안 오는」 사람이 생기고, 그
+ * 어긋남은 신고로만 드러난다.
+ *
+ * 🔴 `getUserById` 를 쓰지 않는 까닭이 그것이다 — 저쪽은 상태와 상관없이
+ * 돌려주므로, 쓰는 쪽마다 `status !== "ACTIVE"` 를 다시 적어야 하고 한 자리만
+ * 빠지면 정지된 계정에 메일이 간다.
+ */
+export async function getApprovalMailRecipient(
+  userId: string
+): Promise<ApprovalMailRecipient | null> {
+  const [row] = await db
+    .select({
+      userId: users.id,
+      displayName: users.displayName,
+      email: users.email,
+    })
+    .from(users)
+    .where(and(eq(users.id, userId), eq(users.status, "ACTIVE")))
+    .limit(1);
+
+  return row ?? null;
 }

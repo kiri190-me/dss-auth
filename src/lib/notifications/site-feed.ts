@@ -23,12 +23,23 @@ import type { PortalNotificationFeed } from "./merge";
  * gather.ts 가 fetch 를 인자로 받는 것과 같은 이유로, 여기서는 DB 조회 넷을
  * 전부 인자로 받는다. 라우트는 그것을 진짜 함수로 채우는 열 줄짜리 껍데기다.
  *
- * ── 🔴 이 방향의 통로는 이제 둘이다 ───────────────────────────────────────
- * 읽기(여기 `handleSiteFeedRequest`)와 지움(site-dismissals.ts 의
- * `handleDismissalRequest`). 둘이 **같은 자격증명으로 같은 문 여섯**을 지나므로
- * 그 여섯을 `authorizeSiteRequest` 한 벌로 두고 나눠 쓴다. 베껴 두면 한쪽만
- * 고치는 날 조용히 갈라지고, **갈라진 것이 보안 판정이면 증상이 없어** 아무도
- * 모른다.
+ * ── 🔴 이 방향의 통로는 이제 넷이다 ───────────────────────────────────────
+ * 읽기(여기 `handleSiteFeedRequest`) · 지움(site-dismissals.ts) ·
+ * 확인(site-acknowledgements.ts) · 결재함(approvals/screen-request.ts). 넷이
+ * **같은 자격증명으로 같은 문 여섯**을 지나므로 그 여섯을 `authorizeSiteRequest`
+ * 한 벌로 두고 나눠 쓴다. 베껴 두면 한쪽만 고치는 날 조용히 갈라지고,
+ * **갈라진 것이 보안 판정이면 증상이 없어** 아무도 모른다.
+ *
+ * ── 🔴 다섯째는 문 여섯을 **그대로는** 지날 수 없다 ───────────────────────
+ * 결재 생성 알림(approvals/notice-request.ts, 2026-10-24)은 본문에 `sub` 가
+ * 아니라 `approverSub` 를 **여럿** 싣는다. `authorizeSiteRequest` 는 `sub` 하나를
+ * 전제로 지어졌으므로(문 ③) 그대로 부르면 언제나 400 이다.
+ *
+ * 🔴 그렇다고 베끼게 두지 않는다 — 베끼면 위 문단이 막으려던 그 갈라짐이 그대로
+ * 생긴다. 대신 문 여섯을 **세 토막**으로 꺼내 두고(`checkSiteCredentials` ①② ·
+ * `verifySiteClient` ④ · `authorizeSiteSubject` ⑤⑥) `authorizeSiteRequest` 자신이
+ * 그 셋을 **순서 그대로** 이어 붙인다. 그래서 토막을 고치면 네 통로와 다섯째가
+ * 함께 바뀐다. 🔵 꺼내 놓기만 했을 뿐 순서도 응답도 그대로다.
  *
  * ── ⚠️ 이 통로로 사이트는 사람을 사칭할 수 있다 ────────────────────────────
  * 사이트가 `sub` 에 아무 사람이나 적어 보낼 수 있다. 그것을 막을 방법은 없다 —
@@ -296,27 +307,17 @@ export async function authorizeSiteRequest<C extends { clientId: string }>(
   request: Request,
   deps: SiteRequestDeps<C>
 ): Promise<SiteRequestOutcome<C>> {
-  // ① 🔴 비밀값은 주소에 실리지 않는다.
-  if (hasCredentialInQuery(request.url)) {
-    return denied(
-      reject(
-        400,
-        "invalid_request",
-        "자격증명은 Authorization 머리말로만 받습니다. 주소에 실린 값은 접근 로그에 남으므로 이 시크릿은 다시 발급하세요.",
-        "credential_in_query"
-      )
-    );
-  }
+  // ①② 주소와 머리말. 여기까지는 DB 를 한 번도 건드리지 않는다.
+  const credentials = checkSiteCredentials(request, deps);
+  if (!credentials.ok) return credentials;
 
-  // ② 자격증명. 여기까지는 DB 를 한 번도 건드리지 않는다 — 머리말 없이
-  //    두드리는 요청은 조회 한 번 값도 쓰지 않고 돌아간다.
-  const credentials = readBasicCredentials(request.headers.get("authorization"));
-  if (!credentials) {
-    return denied(withFailureLimit(deps, unauthorized("no_basic_credentials")));
-  }
-
-  // ③ 누구의 알림인가. 🔴 본문으로만 받는다(위 ①의 이유와 같다 — 사람의
-  //    식별자도 접근 로그에 줄줄이 남을 값이 아니다).
+  // ③ 누구의 알림인가. 🔴 본문으로만 받는다(①의 이유와 같다 — 사람의 식별자도
+  //    접근 로그에 줄줄이 남을 값이 아니다).
+  //
+  // 🔴 **④ 보다 앞이다.** 모양이 틀린 요청은 DB 조회 한 번 값도 쓰지 않고
+  //    돌아간다. (결재 생성 알림 통로는 이 순서를 뒤집었다 — 그쪽은 본문 검사가
+  //    「등록된 시스템 목록」을 짚어 내는 도구가 될 수 있어서다. 까닭은
+  //    approvals/notice-request.ts 에 적혀 있다.)
   let body: string;
   try {
     body = await request.text();
@@ -333,6 +334,63 @@ export async function authorizeSiteRequest<C extends { clientId: string }>(
   }
 
   // ④ 부르는 쪽이 등록된 시스템인가.
+  const verified = await verifySiteClient(credentials.credentials, deps);
+  if (!verified.ok) return verified;
+
+  // ⑤⑥ 그 사람이 쓸 수 있는가 · 그 시스템이 그 사람을 볼 수 있는가.
+  const allowed = await authorizeSiteSubject(subject, verified.client, deps);
+  if (!allowed.ok) return allowed;
+
+  // 🔴 읽은 본문을 그대로 넘긴다(위 주석). 다시 읽을 수 없다.
+  return { ok: true, client: verified.client, subject, body };
+}
+
+/**
+ * 문 ①② — 🔴 **DB 를 건드리기 전에 끝나는 둘.**
+ *
+ *   ① 주소에 비밀값이 실려 있는가  ② 자격증명이 읽히는가
+ *
+ * 🔴 머리말 없이 두드리는 요청은 조회 한 번 값도 쓰지 않고 돌아간다. 이 성질이
+ * 깨지면 시크릿을 두드려 보는 쪽이 **포털 DB 를 대신 두드리는** 꼴이 된다.
+ *
+ * 🔵 따로 내보낸 까닭은 이 파일 머리말의 「다섯째」 문단에 있다 — 본문 모양이
+ * 다른 통로가 ①② 를 **베끼지 않고** 쓸 수 있어야 한다.
+ */
+export function checkSiteCredentials<C extends { clientId: string }>(
+  request: Request,
+  deps: SiteRequestDeps<C>
+): { ok: true; credentials: SiteCredentials } | { ok: false; response: SiteFeedResponse } {
+  // ① 🔴 비밀값은 주소에 실리지 않는다.
+  if (hasCredentialInQuery(request.url)) {
+    return denied(
+      reject(
+        400,
+        "invalid_request",
+        "자격증명은 Authorization 머리말로만 받습니다. 주소에 실린 값은 접근 로그에 남으므로 이 시크릿은 다시 발급하세요.",
+        "credential_in_query"
+      )
+    );
+  }
+
+  // ② 자격증명.
+  const credentials = readBasicCredentials(request.headers.get("authorization"));
+  if (!credentials) {
+    return denied(withFailureLimit(deps, unauthorized("no_basic_credentials")));
+  }
+
+  return { ok: true, credentials };
+}
+
+/**
+ * 문 ④ — 부르는 쪽이 **등록된 그 시스템**인가.
+ *
+ * 🔴 없는 client_id 와 시크릿이 틀린 client_id 는 **같은 얼굴**로 돌아간다
+ * (`unauthorized`). 가르면 등록된 시스템 목록을 알아내는 조회 도구가 된다.
+ */
+export async function verifySiteClient<C extends { clientId: string }>(
+  credentials: SiteCredentials,
+  deps: SiteRequestDeps<C>
+): Promise<{ ok: true; client: C } | { ok: false; response: SiteFeedResponse }> {
   const client = await deps.findActiveClient(credentials.clientId);
   if (!client || !deps.verifySecret(client, credentials.clientSecret)) {
     // 로그에 적는 client_id 는 **DB 에서 온 값**뿐이다(시크릿이 틀린 경우).
@@ -342,19 +400,36 @@ export async function authorizeSiteRequest<C extends { clientId: string }>(
       withFailureLimit(deps, unauthorized(client ? `bad_secret:${client.clientId}` : "unknown_client"))
     );
   }
+  return { ok: true, client };
+}
 
+/**
+ * 문 ⑤⑥ — 그 사람이 **지금 쓸 수 있는 계정**인가, 그리고 **그 시스템이 그 사람을
+ * 볼 수 있는가.** 이 둘이 이 파일의 이유다(머리말의 「유일한 방어선」).
+ *
+ * 🔴 세 거절이 **같은 얼굴**이다(`forbidden`). 없는 사람 · 정지된 사람 · 권한 없는
+ * 사람을 갈라 주면 사이트 하나가 **묻는 것만으로** 포털 사용자 목록과 각자의 접근
+ * 권한을 알아낼 수 있다. 구분은 `logReason` 에만 남는다.
+ *
+ * 🔵 사람을 **여럿** 받는 통로는 이 함수를 사람마다 부르고, 거절을 응답으로
+ * 돌려주는 대신 그 사람만 조용히 건너뛴다(approvals/notice-request.ts).
+ */
+export async function authorizeSiteSubject<C extends { clientId: string }>(
+  subject: string,
+  client: C,
+  deps: SiteRequestDeps<C>
+): Promise<{ ok: true } | { ok: false; response: SiteFeedResponse }> {
   // ⑤ 그 사람이 지금 쓸 수 있는 계정인가.
   const user = await deps.findUser(subject);
   if (!user) return denied(forbidden("unknown_subject"));
   if (user.status !== "ACTIVE") return denied(forbidden(`subject_status=${user.status}`));
 
-  // ⑥ 🔴 그 시스템이 그 사람을 볼 수 있는가. 이 줄이 이 파일의 이유다.
+  // ⑥ 🔴 그 시스템이 그 사람을 볼 수 있는가.
   if (!(await deps.hasAccess(subject, client))) {
     return denied(forbidden("no_client_access"));
   }
 
-  // 🔴 읽은 본문을 그대로 넘긴다(위 주석). 다시 읽을 수 없다.
-  return { ok: true, client, subject, body };
+  return { ok: true };
 }
 
 /** 거절 하나를 「막혔다」로 감싼다. 🔴 응답 자체에는 손대지 않는다. */
