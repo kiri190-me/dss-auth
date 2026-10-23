@@ -57,6 +57,13 @@
       "when": 1792596142614,
       "tag": "0007_melted_zaladane",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792747099952,
+      "tag": "0008_blue_squadron_sinister",
+      "breakpoints": true
     }
   ]
 }

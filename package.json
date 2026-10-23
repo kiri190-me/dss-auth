@@ -17,7 +17,7 @@
     "icons": "tsx scripts/generate-icons.ts",
     "client:grant": "node --conditions=react-server --env-file=.env.local --import tsx scripts/grant-client-access.ts",
     "client:register": "node --env-file=.env.local --import tsx scripts/register-client.ts",
-    "test": "node --import tsx --test src/lib/crypto/hash.test.ts src/lib/crypto/totp.test.ts src/lib/config/transport-check.test.ts src/lib/config/lan-address.test.ts src/lib/db/retention.test.ts src/lib/auth/emergency-lockout.test.ts src/lib/auth/audit-labels.test.ts src/lib/auth/client-order.test.ts src/lib/auth/client-access-values.test.ts src/lib/auth/grant-revocation.test.ts src/lib/crypto/public-jwk.test.ts src/lib/http/rate-limit.test.ts src/lib/http/client-key.test.ts src/lib/oidc/pkce.test.ts src/lib/oidc/redirect-uri.test.ts src/lib/oidc/authorize-params.test.ts src/lib/oidc/discovery-document.test.ts src/lib/oidc/service-menu.test.ts src/lib/oidc/id-token-payload.test.ts src/lib/oidc/service-token.test.ts src/lib/notifications/sources.test.ts src/lib/notifications/merge.test.ts src/lib/notifications/settings.test.ts src/lib/notifications/settings-form.test.ts src/lib/notifications/purposes.test.ts src/lib/notifications/cache.test.ts src/lib/notifications/gather.test.ts src/lib/notifications/site-feed.test.ts src/lib/release-notes.test.ts src/app/bookmark-icon.test.ts src/lib/notifications/dismissals.test.ts src/lib/notifications/site-dismissals.test.ts src/lib/notifications/acknowledgements.test.ts src/lib/notifications/site-acknowledgements.test.ts src/lib/notifications/own-acknowledgements.test.ts src/lib/tools-image.test.ts",
+    "test": "node --import tsx --test src/lib/crypto/hash.test.ts src/lib/crypto/totp.test.ts src/lib/config/transport-check.test.ts src/lib/config/lan-address.test.ts src/lib/db/retention.test.ts src/lib/auth/emergency-lockout.test.ts src/lib/auth/audit-labels.test.ts src/lib/auth/client-order.test.ts src/lib/auth/client-access-values.test.ts src/lib/auth/grant-revocation.test.ts src/lib/crypto/public-jwk.test.ts src/lib/http/rate-limit.test.ts src/lib/http/client-key.test.ts src/lib/oidc/pkce.test.ts src/lib/oidc/redirect-uri.test.ts src/lib/oidc/authorize-params.test.ts src/lib/oidc/discovery-document.test.ts src/lib/oidc/service-menu.test.ts src/lib/oidc/id-token-payload.test.ts src/lib/oidc/service-token.test.ts src/lib/notifications/sources.test.ts src/lib/notifications/merge.test.ts src/lib/notifications/settings.test.ts src/lib/notifications/settings-form.test.ts src/lib/notifications/purposes.test.ts src/lib/notifications/cache.test.ts src/lib/notifications/gather.test.ts src/lib/notifications/site-feed.test.ts src/lib/release-notes.test.ts src/app/bookmark-icon.test.ts src/lib/notifications/dismissals.test.ts src/lib/notifications/site-dismissals.test.ts src/lib/notifications/acknowledgements.test.ts src/lib/notifications/site-acknowledgements.test.ts src/lib/notifications/own-acknowledgements.test.ts src/lib/tools-image.test.ts src/lib/mail/config.test.ts src/lib/approvals/kinds.test.ts src/lib/approvals/sources.test.ts src/lib/approvals/inbox.test.ts src/lib/approvals/mail-message.test.ts src/lib/approvals/plan.test.ts src/lib/approvals/gather.test.ts src/lib/approvals/run.test.ts src/lib/approvals/screen-inbox.test.ts src/lib/approvals/screen-gather.test.ts src/lib/approvals/screen-request.test.ts",
     "db:up": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/db-up.ps1",
     "db:down": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/db-down.ps1",
     "db:psql": "docker exec -it dss-pg-auth psql -U dss_auth_app -d dss_auth",
@@ -26,12 +26,15 @@
     "net:doctor": "node --env-file=.env.local --import tsx scripts/net-doctor.ts",
     "check:oidc": "node --env-file=.env.local --import tsx scripts/e2e-oidc-check.ts",
     "check:notify": "node --conditions=react-server --env-file=.env.local --import tsx scripts/check-notifications.ts",
-    "check:notify:site": "node --conditions=react-server --env-file=.env.local --import tsx scripts/check-site-notifications.ts"
+    "check:notify:site": "node --conditions=react-server --env-file=.env.local --import tsx scripts/check-site-notifications.ts",
+    "notify:approvals": "node --conditions=react-server --env-file-if-exists=.env.local --import tsx scripts/send-approval-mails.ts"
   },
   "dependencies": {
+    "@types/nodemailer": "^8.0.2",
     "drizzle-orm": "^0.45.2",
     "jose": "^6.2.10",
     "next": "^16.3.3",
+    "nodemailer": "^9.1.1",
     "postgres": "^3.4.9",
     "react": "19.2.4",
     "react-dom": "19.2.4",

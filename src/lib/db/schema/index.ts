@@ -9,3 +9,5 @@ export * from "./audit-logs";
 export * from "./notification-dismissals";
 export * from "./notification-acknowledgements";
 export * from "./notification-kind-purposes";
+export * from "./approval-mail-kinds";
+export * from "./approval-mail-deliveries";

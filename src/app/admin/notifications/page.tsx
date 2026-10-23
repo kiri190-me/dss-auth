@@ -1,5 +1,12 @@
 import type { Metadata } from "next";
+import {
+  APPROVAL_MAIL_KINDS,
+  approvalKindFieldName,
+  isApprovalMailKindEnabled,
+} from "@/lib/approvals/kinds";
+import { APPROVAL_INBOX_URL_ENV, readApprovalInboxUrl } from "@/lib/approvals/inbox-url";
 import { requirePortalAdmin } from "@/lib/auth/portal-admin";
+import { listEnabledApprovalMailKinds } from "@/lib/db/queries/approval-mail-kinds";
 import { listKindPurposes } from "@/lib/db/queries/notification-kind-purposes";
 import {
   DEFAULT_NOTIFICATION_PURPOSE,
@@ -23,6 +30,10 @@ import {
   receivesFieldName,
   shownKindState,
 } from "@/lib/notifications/settings-form";
+import {
+  saveApprovalMailKindSettings,
+  sendApprovalTestMail,
+} from "@/lib/server/actions/approval-mail-settings";
 import { saveSystemNotificationSettings } from "@/lib/server/actions/notification-settings";
 
 export const metadata: Metadata = { title: "알림 설정 | DSS 통합 로그인" };
@@ -544,6 +555,149 @@ function SystemBlock({
   );
 }
 
+/**
+ * ============================================================================
+ * 결재 알림 메일 구역 — 🔴 이 화면에서 **유일하게 메일을 켜는 자리**
+ * ============================================================================
+ * 위의 시스템 표들과 뜻이 다르다. 저것들은 「그 시스템의 종 설정」을 물어서
+ * 그리는 것이고, 이것은 **포털이 보내는 메일**의 설정이다. 그래서 값도 포털
+ * DB 에 있고(`approval_mail_kinds`), 시스템이 죽어 있어도 이 구역은 그대로 뜬다.
+ *
+ * 🔴 **기본값은 전부 끔**(2026-10-23 결정). 체크가 하나도 없는 것이 처음 상태이고,
+ * 그 상태에서는 메일이 한 통도 나가지 않는다.
+ *
+ * 🔵 「전부 기본값으로」 링크를 두지 않았다. 위 표들의 그 링크는 **코드가 정한
+ * 기본값**이 따로 있어서 뜻이 있는데, 여기 기본값은 「전부 끔」 하나라 체크를
+ * 전부 지우는 것과 같다 — 단추 하나 늘리는 값이 없다.
+ * ============================================================================
+ */
+function ApprovalMailBlock({
+  enabledKeys,
+  inboxUrl,
+}: {
+  /** 🔴 `null` 이면 **못 읽었다**. 「아무것도 안 켜져 있다」와 다르다. */
+  enabledKeys: ReadonlySet<string> | null;
+  inboxUrl: string | null;
+}) {
+  return (
+    <section id="approval-mail" className="mt-10 scroll-mt-4 border-t border-zinc-200 pt-6 dark:border-zinc-800">
+      <h2 className="text-sm font-semibold">결재 알림 메일</h2>
+      <p className={`mt-1 ${NOTE}`}>
+        새 결재 요청이 생기면 그 결재를 해야 할 사람에게 메일을 보냅니다. 어느 갈래에
+        보낼지를 여기서 켜고 끕니다 — <strong className="font-medium">처음 상태는 전부
+        꺼짐</strong>이고, 켠 갈래만 나갑니다.
+      </p>
+
+      {enabledKeys === null ? (
+        <div
+          role="alert"
+          className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-800 dark:bg-amber-950"
+        >
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+            지금 설정을 읽을 수 없음
+          </p>
+          <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+            `approval_mail_kinds` 표를 읽지 못했습니다. 마이그레이션이 아직 적용되지
+            않았을 수 있습니다. 🔴 켜고 끄는 일은 지금 할 수 없고,{" "}
+            <strong className="font-medium">메일도 나가지 않습니다</strong>.
+          </p>
+        </div>
+      ) : (
+        <>
+          <form action={saveApprovalMailKindSettings} className="mt-3">
+            <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+              {APPROVAL_MAIL_KINDS.map((entry, index) => {
+                // 시스템이 바뀌는 자리에만 이름을 적는다. 갈래마다 적으면 같은
+                // 이름이 세 줄 내리 서서 무엇이 묶여 있는지 오히려 안 보인다.
+                const first =
+                  index === 0 ||
+                  APPROVAL_MAIL_KINDS[index - 1].systemLabel !== entry.systemLabel;
+                return (
+                  <div key={`${entry.clientId}:${entry.kind}`}>
+                    {first ? (
+                      <p
+                        className={`${index === 0 ? "" : "mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800"} text-xs font-medium text-zinc-500`}
+                      >
+                        {entry.systemLabel}
+                        <span className="ml-2 font-normal text-zinc-400">{entry.clientId}</span>
+                      </p>
+                    ) : null}
+                    <label className="mt-1 flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        name={approvalKindFieldName(entry.clientId, entry.kind)}
+                        defaultChecked={isApprovalMailKindEnabled(
+                          enabledKeys,
+                          entry.clientId,
+                          entry.kind
+                        )}
+                        className="h-4 w-4"
+                      />
+                      <span className="text-zinc-900 dark:text-zinc-50">{entry.label}</span>
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="submit"
+                className={`${BTN} bg-zinc-900 text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900`}
+              >
+                저장
+              </button>
+              {/* 브라우저의 폼 초기화 — 저장하지 않은 편집을 불러온 값으로 되돌린다. */}
+              <button type="reset" className={`${BTN} ${BTN_PLAIN}`}>
+                되돌리기
+              </button>
+            </div>
+          </form>
+
+          {/*
+            🔴 시험 메일은 **따로 선 폼**이다. 위 폼 안에 두면 체크 상태가 함께
+            실려 와 「저장도 되는가」를 헷갈리게 한다 — 이 단추는 아무것도 저장하지
+            않고 메일 한 통만 보낸다.
+          */}
+          <form action={sendApprovalTestMail} className="mt-2">
+            <button type="submit" className={`${BTN} ${BTN_PLAIN}`}>
+              시험 메일 보내기
+            </button>
+            {/* 어디로 가는지 단추 옆에 늘 적어 둔다 — 「시험」이라는 말만 믿고
+                누르면 누구에게 갔는지 알 수 없다. */}
+            <span className={`ml-2 ${NOTE}`}>
+              지금 로그인한 내 계정의 메일 주소로 한 통만 갑니다(예시 건수).
+            </span>
+          </form>
+        </>
+      )}
+
+      <p className={`mt-3 ${NOTE}`}>
+        🔴 메일 본문에는 <strong className="font-medium">건의 내용을 싣지 않습니다</strong> —
+        고객사 · 금액 · 품명 · 사람 이름 · 인수번호는 한 글자도 나가지 않고, 갈래별
+        건수와 승인함 주소만 적힙니다. 메일은 바깥 메일 서버를 거쳐 영구히 남고, 개인
+        메일로 자동 전달을 걸어 둔 사람이 있으면 막을 길이 없기 때문입니다.
+      </p>
+      <p className={`mt-2 ${NOTE}`}>
+        같은 결재는 <strong className="font-medium">한 번만</strong> 갑니다. 메일은 하루
+        한 번 도는 작업이 보냅니다 — 결재가 생긴 그 순간이 아니라, 그 다음 작업 때
+        나갑니다.
+      </p>
+      <p className={`mt-2 ${NOTE}`}>
+        메일에 적는 승인함 주소:{" "}
+        {inboxUrl === null ? (
+          <span className="text-amber-700 dark:text-amber-400">
+            아직 없습니다({APPROVAL_INBOX_URL_ENV} 를 적지 않았습니다). 메일은 나가되 주소
+            줄만 빠집니다.
+          </span>
+        ) : (
+          <span className="text-zinc-700 dark:text-zinc-300">{inboxUrl}</span>
+        )}
+      </p>
+    </section>
+  );
+}
+
 export default async function AdminNotificationsPage({
   searchParams,
 }: {
@@ -581,6 +735,25 @@ export default async function AdminNotificationsPage({
         )
     )
   );
+
+  /*
+    결재 알림 메일의 스위치. 🔴 **여기만 던지는 것을 막는다.**
+
+    위 `purposes` 와 다른 까닭: 그 표는 이 화면이 처음 생길 때부터 있던 것이고,
+    이 표(`approval_mail_kinds`)는 **마이그레이션이 아직 적용되지 않았을 수 있다.**
+    적용 전에 이 화면을 열면 조회가 던지고, 그러면 **알림 설정 화면 전체가 500**
+    이 된다 — 결재 메일과 아무 상관 없는 종 설정까지 함께 못 쓰게 된다.
+
+    🔴 그렇다고 빈 집합으로 떨어뜨리지 않는다. 그러면 「아무것도 안 켜져 있다」로
+    보이고, 그 표를 그대로 저장하면 사람이 켜 둔 갈래가 조용히 꺼진다. `null` 은
+    「못 읽었다」는 뜻이고, 화면은 그 구역만 경고로 바꾼다.
+  */
+  let approvalMailKeys: ReadonlySet<string> | null = null;
+  try {
+    approvalMailKeys = await listEnabledApprovalMailKinds();
+  } catch (error) {
+    console.error("[approvals-mail] 켜 둔 갈래를 읽지 못했습니다:", error);
+  }
 
   return (
     <main className="pt-8">
@@ -627,6 +800,12 @@ export default async function AdminNotificationsPage({
           />
         ))
       )}
+
+      {/*
+        🔴 **시스템 표들 다음이다.** 위는 「그 시스템이 가진 종 설정」이고 이것은
+        「포털이 보내는 메일」이라, 섞어 두면 저장 단추가 어느 쪽 것인지 헷갈린다.
+      */}
+      <ApprovalMailBlock enabledKeys={approvalMailKeys} inboxUrl={readApprovalInboxUrl()} />
 
       <p className={`mt-10 border-t border-zinc-200 pt-4 ${NOTE} dark:border-zinc-800`}>
         알림 통로를 연 시스템만 나옵니다. 알림이 아예 없는 시스템은 여기에 줄이 생기지
