@@ -71,6 +71,10 @@ type Calls = {
   findUser: string[];
   hasAccess: string[];
   inboxFor: { userId: string }[];
+  /** 🔴 「승인함을 열었다」를 적은 기록. `/apps` 의 빨간 점이 이것으로 꺼진다. */
+  markSeen: { userId: string; seenAt: Date }[];
+  /** 결재함을 모으기 **시작한** 때. 적는 시각이 그보다 뒤면 안 된다. */
+  inboxStartedAt: number[];
 };
 
 function makeDeps(
@@ -79,9 +83,20 @@ function makeDeps(
     secretOk?: boolean;
     user?: { status: string } | null;
     access?: boolean;
+    /** 모으는 데 이만큼 걸린다 — 「적는 시각이 모으기 전인가」를 재려고 둔다. */
+    inboxDelayMs?: number;
+    inboxFails?: boolean;
+    markSeenFails?: boolean;
   } = {}
 ): { deps: ApprovalInboxDeps<{ clientId: string }>; calls: Calls } {
-  const calls: Calls = { findActiveClient: [], findUser: [], hasAccess: [], inboxFor: [] };
+  const calls: Calls = {
+    findActiveClient: [],
+    findUser: [],
+    hasAccess: [],
+    inboxFor: [],
+    markSeen: [],
+    inboxStartedAt: [],
+  };
 
   const deps: ApprovalInboxDeps<{ clientId: string }> = {
     async findActiveClient(clientId) {
@@ -100,12 +115,33 @@ function makeDeps(
       return over.access ?? true;
     },
     async inboxFor(params) {
+      calls.inboxStartedAt.push(Date.now());
       calls.inboxFor.push(params);
+      if (over.inboxDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, over.inboxDelayMs));
+      }
+      // 🔴 DB 가 죽은 경우다. 라우트가 503 으로 받는다.
+      if (over.inboxFails) throw new Error("결재함을 모으지 못했습니다");
       return INBOX;
+    },
+    async markSeen(params) {
+      calls.markSeen.push(params);
+      if (over.markSeenFails) throw new Error("적지 못했습니다");
     },
   };
 
   return { deps, calls };
+}
+
+/** 실패 갈래는 서버 로그에 한 줄 남긴다 — 시험 출력만 조용히 한다. */
+async function quiet<T>(run: () => Promise<T>): Promise<T> {
+  const original = console.error;
+  console.error = () => {};
+  try {
+    return await run();
+  } finally {
+    console.error = original;
+  }
 }
 
 const OK_HEADER = basic("dss-approvals", "맞는값");
@@ -298,6 +334,127 @@ test("🔴 답은 어디에도 남지 않는다 — 성공도 거절도 no-store
   assert.equal(ok.headers["cache-control"], "no-store");
   assert.equal(ok.headers["pragma"], "no-cache");
   assert.equal(denied.headers["cache-control"], "no-store");
+});
+
+// ──────────────────── 🔴 이 부름이 곧 「승인함을 열었다」다 (`/apps` 의 빨간 점)
+
+test("🔴 승인함을 열면 그 사람의 seen_at 이 갱신된다 — 점은 이것으로 꺼진다", async () => {
+  const { deps, calls } = makeDeps();
+  const before = Date.now();
+  const result = await handleApprovalInboxRequest(post({ authorization: OK_HEADER }), deps);
+  const after = Date.now();
+
+  assert.equal(result.status, 200);
+  assert.equal(calls.markSeen.length, 1, "열었는데 아무것도 안 적었다");
+  assert.equal(calls.markSeen[0].userId, USER);
+  // 지금 시각으로 민다 — 옛 시각을 적으면 점이 안 꺼지고, 앞선 시각을 적으면
+  // 그 뒤에 올 결재까지 「이미 본 것」이 된다.
+  const seen = calls.markSeen[0].seenAt.getTime();
+  assert.ok(seen >= before && seen <= after, `${seen} 이 ${before}~${after} 밖이다`);
+});
+
+test("🔴 적는 시각은 **모으기 전**이다 — 모으는 1.5초 사이의 결재를 묻지 않는다", async () => {
+  // 다 모은 뒤의 시각을 적으면, 모으는 동안 올라온 결재가 「이미 본 것」이 되어
+  // 점이 영영 안 뜬다 — 화면에는 그 건이 없었는데도 그렇다.
+  const { deps, calls } = makeDeps({ inboxDelayMs: 25 });
+  await handleApprovalInboxRequest(post({ authorization: OK_HEADER }), deps);
+
+  assert.equal(calls.inboxStartedAt.length, 1, "표본이 비면 아래가 공짜로 통과한다");
+  assert.ok(
+    calls.markSeen[0].seenAt.getTime() <= calls.inboxStartedAt[0],
+    "모으기가 시작된 뒤의 시각을 적었다"
+  );
+});
+
+test("🔴 `sub` 를 바꿔 적어도 **그 사람의** seen_at 만 밀린다", async () => {
+  // 여기가 어긋나면 사이트 하나가 남의 점을 꺼 버릴 수 있다 — 그 사람은 새
+  // 결재가 온 줄 모른다.
+  const { deps, calls } = makeDeps();
+  await handleApprovalInboxRequest(
+    post({ authorization: OK_HEADER, body: `sub=${OTHER_USER}` }),
+    deps
+  );
+
+  assert.deepEqual(
+    calls.markSeen.map((row) => row.userId),
+    [OTHER_USER]
+  );
+});
+
+test("🔴 거절당한 요청은 seen_at 을 건드리지 않는다 — 문 여섯을 지난 뒤에만 적는다", async () => {
+  const denials: { label: string; call: () => Promise<unknown>; calls: Calls }[] = [];
+
+  const noCredential = makeDeps();
+  denials.push({
+    label: "자격증명 없음(401)",
+    call: () => handleApprovalInboxRequest(post(), noCredential.deps),
+    calls: noCredential.calls,
+  });
+
+  const badSecret = makeDeps({ secretOk: false });
+  denials.push({
+    label: "시크릿 틀림(401)",
+    call: () =>
+      handleApprovalInboxRequest(post({ authorization: basic("dss-approvals", "틀린값") }), badSecret.deps),
+    calls: badSecret.calls,
+  });
+
+  const suspended = makeDeps({ user: { status: "SUSPENDED" } });
+  denials.push({
+    label: "정지된 계정(403)",
+    call: () => handleApprovalInboxRequest(post({ authorization: OK_HEADER }), suspended.deps),
+    calls: suspended.calls,
+  });
+
+  const noAccess = makeDeps({ access: false });
+  denials.push({
+    label: "권한 없음(403)",
+    call: () => handleApprovalInboxRequest(post({ authorization: OK_HEADER }), noAccess.deps),
+    calls: noAccess.calls,
+  });
+
+  const noSubject = makeDeps();
+  denials.push({
+    label: "sub 없음(400)",
+    call: () => handleApprovalInboxRequest(post({ authorization: OK_HEADER, body: "" }), noSubject.deps),
+    calls: noSubject.calls,
+  });
+
+  assert.equal(denials.length, 5, "표본이 비면 아래 단언이 공짜로 통과한다");
+  for (const denial of denials) {
+    await denial.call();
+    assert.deepEqual(denial.calls.markSeen, [], denial.label);
+  }
+});
+
+test("🔴 모으기가 깨지면(503) seen_at 을 적지 않는다 — 한 줄도 못 본 사람이다", async () => {
+  // 못 본 것을 「봤다」로 적으면 점이 거짓으로 꺼지고, 그 새 결재는 묻힌다.
+  const { deps, calls } = makeDeps({ inboxFails: true });
+  await assert.rejects(() => handleApprovalInboxRequest(post({ authorization: OK_HEADER }), deps));
+
+  assert.deepEqual(calls.markSeen, []);
+});
+
+test("🔴 적기가 실패해도 결재함은 그대로 내준다 — 점 하나 때문에 화면이 멎으면 안 된다", async () => {
+  const { deps, calls } = makeDeps({ markSeenFails: true });
+  const result = await quiet(() =>
+    handleApprovalInboxRequest(post({ authorization: OK_HEADER }), deps)
+  );
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, INBOX);
+  assert.equal(calls.markSeen.length, 1, "적으려고 시도는 했다");
+});
+
+test("🔵 한 시스템을 못 읽은 채(degraded)로도 적는다 — 안 그러면 점이 영영 안 꺼진다", async () => {
+  // 위 INBOX 는 재고 관리가 `failed` 인 상태다(degraded: true). 그때도 사람은
+  // 나머지 결재를 다 봤고, 안 적으면 그 시스템이 꺼져 있는 동안 승인함을 열고
+  // 또 열어도 점이 그대로다.
+  const { deps, calls } = makeDeps();
+  const result = await handleApprovalInboxRequest(post({ authorization: OK_HEADER }), deps);
+
+  assert.equal((result.body as ScreenApprovalInbox).degraded, true, "표본이 degraded 가 아니다");
+  assert.equal(calls.markSeen.length, 1);
 });
 
 test("🔵 부른 사이트를 빼는 처리가 없다 — 모으는 쪽은 **사람 하나만** 받는다", async () => {

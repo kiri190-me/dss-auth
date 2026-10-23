@@ -3,6 +3,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import SignOutButton from "@/components/SignOutButton";
+import { hasNewApprovalsForTile } from "@/lib/approvals/screen-service";
+import { isApprovalsTile } from "@/lib/approvals/tile-dot";
 import { listAccessibleClients } from "@/lib/db/queries/clients";
 import { shouldShowTileDot, type PortalNotificationFeed } from "@/lib/notifications/merge";
 import { getNotificationFeed } from "@/lib/notifications/service";
@@ -53,6 +55,49 @@ async function UnreadDot({
   );
 }
 
+/**
+ * 승인함 타일에만 붙는 **「새 결재」 표시.**
+ *
+ * ── 🔴 색만으로 알리지 않는다 ────────────────────────────────────────────
+ * 점 옆에 **「새 결재」라는 글자**가 함께 뜬다. 위 UnreadDot 은 점만 찍고 글자를
+ * `sr-only` 로 숨기지만, 그쪽은 「확인하지 않은 알림」이라 들어가 보면 알 수 있는
+ * 것이고 이쪽은 **결재**다 — 빨강을 못 가리는 사람에게도, 작은 화면에서 아이콘이
+ * 뭉쳐 보일 때도 무엇이 기다리는지 한눈에 읽혀야 한다. `title` 은 마우스를 얹은
+ * 사람 몫의 한 문장이다.
+ *
+ * ── 🔵 개수를 적지 않는 까닭 ─────────────────────────────────────────────
+ * 숫자를 적으려면 **모든 줄이 성해야** 한다. 그런데 한 시스템이 못 답하면 그쪽
+ * 결재는 애초에 목록에 없고(screen-gather.ts 의 `failed`), 열쇠가 없는 줄은
+ * 버려진다(screen-inbox.ts 의 `dropped`). 그 상태에서 「3건」이라고 적으면 들어가
+ * 보는 화면의 숫자와 다르고, **틀린 숫자는 점이 거짓말하는 것보다 나쁘다.**
+ * 「새 결재」는 한 줄만 맞으면 참이다.
+ *
+ * 🔴 **승인함이 아닌 타일에서는 약속을 기다리지도 않는다**(아래 첫 줄). 그래서
+ * 나머지 여덟 타일은 이 조각 때문에 한 순간도 늦어지지 않는다. 🔴 어느 타일인지
+ * 아는 것은 tile-dot.ts 이고 **이 파일에는 시스템 이름이 한 글자도 없다** — 위
+ * UnreadDot 과 같은 규율이다.
+ */
+async function NewApprovalBadge({
+  dot,
+  clientId,
+}: {
+  dot: Promise<boolean>;
+  clientId: string;
+}) {
+  if (!isApprovalsTile(clientId)) return null;
+  if (!(await dot)) return null;
+
+  return (
+    <span
+      className="absolute right-4 top-4 flex items-center gap-1.5 text-xs font-medium text-red-600 dark:text-red-400"
+      title="확인하지 않은 새 결재가 있습니다"
+    >
+      <span className="h-2.5 w-2.5 rounded-full bg-red-500" aria-hidden="true" />
+      새 결재
+    </span>
+  );
+}
+
 export default async function AppsPage() {
   const session = await readSsoSession();
   if (!session) redirect("/signin");
@@ -74,6 +119,24 @@ export default async function AppsPage() {
   const feed = getNotificationFeed(session.userId).catch(
     (): PortalNotificationFeed | null => null
   );
+
+  /*
+    승인함 타일의 「새 결재」 표시. 🔴 **위 feed 와 같은 규율이다** — 기다리지
+    않고 약속만 만들어 `<Suspense>` 에 넘긴다. 세 시스템에 묻는 왕복이라
+    여기서 await 하면 첫 화면이 남의 서버 사정만큼 느려진다.
+
+    🔴 **승인함 타일이 없는 사람에게는 아예 묻지 않는다.** 들어갈 수 없는
+    사람(또는 승인함이 아직 clients 에 등록되기 전)에게 세 시스템을 두드려 봐야
+    그릴 자리가 없다. 🔵 이때 약속을 `null` 로 두지 않고 **false 로 채운** 까닭은
+    아래 조각의 인자 타입을 갈래 없이 하나로 두기 위해서다.
+
+    .catch 를 붙이는 까닭도 feed 와 같다: 그 함수는 던지지 않게 만들어져 있지만
+    (tile-dot.ts), 만약 던지더라도 그것이 **첫 화면을 깨서는 안 된다.** 못 쟀을
+    때의 답은 언제나 「점 없음」이다.
+  */
+  const approvalDot = tiles.some((tile) => isApprovalsTile(tile.clientId))
+    ? hasNewApprovalsForTile(session.userId).catch(() => false)
+    : Promise.resolve(false);
 
   return (
     <main className="mx-auto w-full max-w-2xl px-6 py-12">
@@ -131,6 +194,14 @@ export default async function AppsPage() {
                 */}
                 <Suspense fallback={null}>
                   <UnreadDot feed={feed} clientId={tile.clientId} />
+                </Suspense>
+                {/*
+                  🔵 둘이 같은 자리(`right-4 top-4`)를 쓰지만 **겹칠 일이 없다** —
+                  위 점은 알림 통로를 가진 시스템에만 뜨고(merge.ts 의 목록),
+                  이 글자는 승인함에만 뜬다. 승인함에는 알림 통로가 없다.
+                */}
+                <Suspense fallback={null}>
+                  <NewApprovalBadge dot={approvalDot} clientId={tile.clientId} />
                 </Suspense>
               </a>
             </li>

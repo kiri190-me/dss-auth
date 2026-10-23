@@ -1,6 +1,7 @@
 import "server-only";
 import { getIssuer } from "@/lib/config/env";
 import { getSigningKey } from "@/lib/crypto/keys";
+import { readApprovalInboxSeenAt } from "@/lib/db/queries/approval-inbox-views";
 import { listAccessibleClients } from "@/lib/db/queries/clients";
 import { signPortalServiceToken } from "@/lib/oidc/service-token";
 import type { SignApprovalToken } from "./gather";
@@ -10,6 +11,7 @@ import {
   type UnreachableApprovalSource,
 } from "./screen-gather";
 import { toApprovalSources } from "./sources";
+import { decideApprovalTileDot } from "./tile-dot";
 
 /**
  * ============================================================================
@@ -93,5 +95,44 @@ export async function getScreenApprovalInbox(params: {
     sources,
     unreachable,
     signToken: signerFor(params.userId),
+  });
+}
+
+/**
+ * `/apps` 승인함 타일에 **빨간 점을 띄울 것인가.**
+ *
+ * 🔴 **던지지 않고 늦지도 않는다**(tile-dot.ts 의 decideApprovalTileDot). 첫
+ * 화면을 그리는 길 위에 있으므로 그 둘이 이 함수의 전부다.
+ *
+ * ── 🔴 왜 「개수만 묻는 가벼운 길」을 따로 내지 않았나 ───────────────────
+ * 점 하나를 켜자고 결재함을 통째로 모으는 것이 무거워 보이지만, **더 가벼운 길이
+ * 실제로는 없다**:
+ *
+ *  · 세 시스템의 통로는 `{ items, count }` 를 **한 번에** 내준다. 「개수만」을
+ *    받으려면 저쪽 라우트를 고쳐야 하는데 🔴 **그건 다른 저장소 셋**이고, 포털이
+ *    먼저 바꾸면 통로가 통째로 어긋난다.
+ *  · 그리고 `count` 만으로는 이 점을 **잴 수 없다.** 점의 뜻은 「밀린 것이
+ *    있는가」가 아니라 「**마지막으로 연 뒤에 새로 온 것**이 있는가」라서,
+ *    줄마다의 `requestedAt` 이 반드시 필요하다. 숫자 하나로는 어제 본 건이
+ *    그대로 남아 있는 것과 새 건이 온 것을 구별할 수 없다.
+ *
+ * 🔵 치르는 값은 한 번의 왕복(셋을 동시에, 최대 1.5초)이고, 그나마 타일을 다
+ * 그린 뒤 `<Suspense>` 로 흘러 들어온다(apps/page.tsx). 🔴 **승인함 타일이 없는
+ * 사람에게는 아예 부르지 않는다** — 그 판정은 화면이 한다.
+ *
+ * ── 🔴 캐시하지 않는다 ───────────────────────────────────────────────────
+ * 종은 사람마다 30초를 들고 있지만(notifications/service.ts) 결재함에는 캐시가
+ * 없다(위 getScreenApprovalInbox 의 머리말). 점도 같은 길을 쓰므로 자연히 매번
+ * 새로 센다 — 「처리했는데 점이 30초 남는다」가 없다.
+ */
+export async function hasNewApprovalsForTile(userId: string): Promise<boolean> {
+  return decideApprovalTileDot({
+    readSeenAt: () => readApprovalInboxSeenAt(userId),
+    // 🔴 **승인함이 받는 것과 글자 하나까지 같은 목록**이다. 점이 「있다」고 한
+    //    것과 들어가서 보는 것이 어긋날 길이 없다 — 다른 길로 세면 언젠가
+    //    갈라지고, 갈라지면 사람이 점을 안 믿는다.
+    // 🔵 이 길은 `seen_at` 을 **갱신하지 않는다.** 갱신은 승인함이 부르는 통로
+    //    한 곳뿐이다(screen-request.ts).
+    readApprovals: () => getScreenApprovalInbox({ userId }),
   });
 }

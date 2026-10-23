@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { handleApprovalInboxRequest } from "@/lib/approvals/screen-request";
 import { getScreenApprovalInbox } from "@/lib/approvals/screen-service";
+import { markApprovalInboxSeen } from "@/lib/db/mutations/approval-inbox-views";
 import {
   getActiveClient,
   hasClientAccess,
@@ -48,6 +49,10 @@ import { NO_STORE } from "@/lib/notifications/site-feed";
  * 누르고 「이미 처리된 건」을 본다. 포털에도 캐시가 없고(screen-service.ts),
  * 응답에는 `no-store` 가 붙는다.
  *
+ * 🔵 **남지 않는 것은 「답」이다.** 「이 사람이 승인함을 열었다」는 한 줄은 남는다
+ * (`approval_inbox_views.seen_at`) — 결재의 내용은 한 글자도 담기지 않고, 그 한
+ * 줄로 `/apps` 타일의 빨간 점이 꺼진다(approvals/tile-dot.ts).
+ *
  * 판정은 screen-request.ts 에 있고 여기는 그것을 진짜 함수로 채우는 껍데기다.
  * ============================================================================
  */
@@ -66,6 +71,11 @@ export async function POST(request: Request) {
       findUser: getUserById,
       hasAccess: hasClientAccess,
       inboxFor: getScreenApprovalInbox,
+      // 🔴 **이 부름이 곧 「승인함을 열었다」** 이고, `/apps` 타일의 빨간 점이
+      // 이것으로 꺼진다(screen-request.ts 의 그 문단). 다른 통로에서는 이
+      // 함수를 부르지 않는다 — 밤에 도는 결재 메일 작업이 부르면 아침마다 점이
+      // 사라져 아무도 새 결재를 모른다(mutations/approval-inbox-views.ts).
+      markSeen: ({ userId, seenAt }) => markApprovalInboxSeen(userId, seenAt),
       // 🔴 **알림 통로와 같은 통을 쓴다.** 세 통로가 **같은 자격증명**을 받으므로
       // 통을 나누면 시크릿을 두드리는 쪽이 분당 20번을 **세 번** 얻는다(합쳐서
       // 60번). 같이 쓰면 합쳐서 20번이라 더 좁다.
