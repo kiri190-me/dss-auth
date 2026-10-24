@@ -45,7 +45,9 @@
  * 코드를 두면 종이에 적힌 또 하나의 비밀이 생기고, 그 종이는 대개 비밀번호
  * 옆에 놓인다.
  */
-// 환경변수는 node --env-file=.env.local 로 주입한다(package.json 스크립트 참조).
+// 환경변수는 node --env-file-if-exists=.env.local 로 주입한다(package.json 스크립트 참조).
+// 그 파일이 없는 곳(도구 컨테이너)에서는 죽지 않고 지나가며, 이미 들어와 있는
+// 환경변수를 그대로 쓴다 — 비상구를 운영에서도 부를 수 있어야 하기 때문이다.
 import { randomBytes } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { hashPassword } from "../src/lib/crypto/hash";

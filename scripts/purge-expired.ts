@@ -18,7 +18,9 @@
  * 초기화되며, 무엇보다 언제 돌았는지 알 수 없다. A/S 시스템의 purge:*
  * 스크립트들과 같은 판단이다.
  */
-// 환경변수는 node --env-file=.env.local 로 주입한다(package.json 참조).
+// 환경변수는 node --env-file-if-exists=.env.local 로 주입한다(package.json 참조).
+// 그 파일이 없는 곳(도구 컨테이너)에서는 죽지 않고 지나가며, 이미 들어와 있는
+// 환경변수를 그대로 쓴다 — 이 스크립트를 NAS 에서 부를 수 있는 까닭이다.
 import { and, isNotNull, lt, or, sql } from "drizzle-orm";
 import { db, pgClient } from "../src/lib/db/connection";
 import { retentionCutoffs } from "../src/lib/db/retention";

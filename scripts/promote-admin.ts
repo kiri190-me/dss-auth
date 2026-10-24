@@ -12,7 +12,9 @@
  *   npm run admin:promote                 → 사용자 목록 출력
  *   npm run admin:promote -- <사용자 id>   → ACTIVE + 포털 관리자로 승격
  */
-// 환경변수는 node --env-file=.env.local 로 주입한다(package.json 스크립트 참조).
+// 환경변수는 node --env-file-if-exists=.env.local 로 주입한다(package.json 스크립트 참조).
+// 그 파일이 없는 곳(도구 컨테이너)에서는 죽지 않고 지나가며, 이미 들어와 있는
+// 환경변수를 그대로 쓴다 — 비상구를 운영에서도 부를 수 있어야 하기 때문이다.
 // dotenv.config()를 파일 상단에 두는 방식은 동작하지 않는다 — ESM import는
 // 호이스팅되어 dotenv보다 먼저 실행되므로, DB 모듈이 이미 빈 환경변수를 읽은 뒤다.
 import { eq } from "drizzle-orm";

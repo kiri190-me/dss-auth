@@ -123,11 +123,21 @@ COPY --chown=node:node drizzle ./drizzle
 # purge-expired.ts는 감사 로그 보관기간(3년)을 실제로 집행하는 유일한 코드다.
 # 비상구는 쓸 일이 생긴 뒤에 넣을 수 없으니 미리 담는다(184KB).
 #
-# ⚠️ 다만 package.json의 그 스크립트들은 아직 `node --env-file=.env.local`로
-#    적혀 있다. 컨테이너에 그 파일이 없으므로 `npm run admin:promote`는 그 줄에서
-#    죽는다. 컨테이너에는 환경변수가 이미 들어와 있으니 파일 없이 직접 부른다:
+# 부르는 길이 둘이고 **둘 다 통한다.**
+#
+# ① package.json의 스크립트 이름으로 부른다. 2026-10-25부터 그 줄들이
+#    `--env-file-if-exists=.env.local`로 적혀 있다 — 파일이 있으면 읽고(개발 PC)
+#    없으면 조용히 지나간다(컨테이너). 값은 compose가 넣는 환경변수에서 온다.
+#      … run --rm tools-auth npm run admin:promote
+#      … run --rm tools-auth npm run db:purge -- --dry-run
+#
+# ② 스크립트 파일을 직접 부른다. package.json을 거치지 않는다.
 #      … run --rm tools-auth node --import tsx scripts/promote-admin.ts
-#    (그 스크립트들을 --env-file-if-exists로 고치는 것은 별도 조각이다.)
+#
+# 🔵 ①이 생겼다고 ②를 지우지 않는다. **②는 이 판 이전에 구운 이미지에서도 통한다** —
+#    그 안의 package.json은 아직 옛 줄이라 ①이 그 자리에서 죽는다. 이미지를 다시
+#    굽기 전에 비상구를 써야 하는 날이 올 수 있고, 그날 되돌릴 다른 길이 없다.
+#    NAS 야간 작업이 ②로 적혀 있는 까닭도 이것이다.
 COPY --chown=node:node scripts ./scripts
 
 USER node
