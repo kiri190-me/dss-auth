@@ -10,7 +10,7 @@ import {
 } from "./kinds";
 
 /**
- * 갈래 다섯과 「켜짐」을 읽는 규칙.
+ * 갈래 여섯과 「켜짐」을 읽는 규칙.
  *
  * 🔴 이 파일이 지키는 가장 중요한 것은 **기본값이 「전부 끔」**이라는 것이다.
  * 반대로 틀리면 표를 만들자마자 전 직원에게 메일이 쏟아지고, 이미 나간 메일은
@@ -26,7 +26,7 @@ function formWith(checked: readonly { clientId: string; kind: string }[]): FormD
   return form;
 }
 
-test("갈래가 다섯이고, 세 시스템의 코드와 글자가 맞는다", () => {
+test("갈래가 여섯이고, 세 시스템의 코드와 글자가 맞는다", () => {
   // 🔴 저장소가 셋이라 컴파일러가 못 잡는 자리다. 저쪽 코드를 고치면 이 줄이 먼저
   //    깨져야 한다(approvals/kinds.ts 머리말).
   assert.deepEqual(
@@ -35,6 +35,9 @@ test("갈래가 다섯이고, 세 시스템의 코드와 글자가 맞는다", (
       "rf-service-system:REPAIR_INSPECTION",
       "rf-service-system:FINAL_SHIPMENT",
       "rf-service-system:QUOTE_APPROVAL",
+      // 🔴 2026-11-06 에 늘었다(A/S 의 기타건 최종 출하 승인). 그쪽 글자는
+      //    domain/domestic-order-approval-rules.ts 의 DOMESTIC_ORDER_APPROVAL_TYPE 다.
+      "rf-service-system:DOMESTIC_ORDER_FINAL_SHIPMENT",
       "dss-inventory:PART_ISSUE_APPROVAL",
       "dss-leave:LEAVE_REQUEST",
     ]
@@ -42,17 +45,17 @@ test("갈래가 다섯이고, 세 시스템의 코드와 글자가 맞는다", (
 });
 
 test("갈래마다 사람이 읽는 이름이 있다 — 메일 본문에 쓰는 유일한 말이다", () => {
-  assert.equal(APPROVAL_MAIL_KINDS.length, 5);
+  assert.equal(APPROVAL_MAIL_KINDS.length, 6);
   for (const entry of APPROVAL_MAIL_KINDS) {
     assert.ok(entry.label.trim() !== "", `${entry.kind} 에 이름이 없다`);
     assert.ok(entry.systemLabel.trim() !== "", `${entry.kind} 에 시스템 이름이 없다`);
   }
 });
 
-test("🔴 기본값은 전부 끔 — 저장된 것이 없으면 다섯 다 꺼져 있다", () => {
+test("🔴 기본값은 전부 끔 — 저장된 것이 없으면 여섯 다 꺼져 있다", () => {
   const nothingStored = new Set<string>();
   // 🔵 먼저 「무엇을 재는지」를 못 박는다. 목록이 비면 아래 for 가 공짜로 통과한다.
-  assert.equal(APPROVAL_MAIL_KINDS.length, 5);
+  assert.equal(APPROVAL_MAIL_KINDS.length, 6);
   for (const entry of APPROVAL_MAIL_KINDS) {
     assert.equal(
       isApprovalMailKindEnabled(nothingStored, entry.clientId, entry.kind),

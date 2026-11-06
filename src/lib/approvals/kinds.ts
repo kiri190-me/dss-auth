@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * 메일을 보낼 수 있는 **결재 갈래 다섯** — 그리고 「켜짐」을 읽는 규칙
+ * 메일을 보낼 수 있는 **결재 갈래 여섯** — 그리고 「켜짐」을 읽는 규칙
  * ============================================================================
  * 세 시스템이 `GET /api/integration/approvals` 로 내주는 결재의 갈래다. 포털은
  * 이 목록을 **코드에 적어 둔다.** 알림 설정(종)에서 「종류 목록도 이름도 그
@@ -9,7 +9,7 @@
  *  · 승인함 통로에는 **설정 통로가 없다.** 종은 시스템마다
  *    `/api/integration/notification-settings` 로 「내가 내주는 종류는 이것들」을
  *    함께 보내 주지만, 결재 통로는 **결재건만** 보낸다. 관리자 화면에 스위치
- *    다섯을 그리려면 포털이 목록을 알아야 한다.
+ *    여섯을 그리려면 포털이 목록을 알아야 한다.
  *  · 🔴 그리고 그 화면은 **그 시스템이 죽어 있어도 떠야 한다.** 물어서 그리는
  *    구조면 A/S 가 꺼져 있는 동안 A/S 쪽 스위치 셋이 화면에서 사라지고, 관리자는
  *    「없어졌다」와 「못 물어봤다」를 구별할 수 없다.
@@ -50,6 +50,11 @@ export type ApprovalMailKindEntry = {
 /**
  * 🔴 **차례가 곧 화면과 메일 본문의 차례다.** 시스템별로 묶여 있고, A/S 안에서는
  * 결재가 일어나는 순서(검수 → 출하 → 견적서)로 둔다.
+ *
+ * 🔵 **기타건은 그 셋 뒤에 선다.** 앞 셋은 접수 건 하나를 따라가는 한 흐름이고
+ * (검수 → 출하 → 견적서), 기타건 출하 결재는 **수리 건이 안 붙은 내자 줄**에서
+ * 따로 일어나는 다른 흐름이다(2026-11-06). 흐름 가운데에 끼우면 화면에서 「검수
+ * 다음에 오는 것」으로 읽힌다.
  */
 export const APPROVAL_MAIL_KINDS: readonly ApprovalMailKindEntry[] = [
   {
@@ -68,6 +73,19 @@ export const APPROVAL_MAIL_KINDS: readonly ApprovalMailKindEntry[] = [
     clientId: "rf-service-system",
     kind: "QUOTE_APPROVAL",
     label: "견적서 결재",
+    systemLabel: "A/S 관리",
+  },
+  {
+    // 🔴 A/S 의 `DOMESTIC_ORDER_APPROVAL_TYPE` 과 한 글자씩 같다
+    // (그쪽 domain/domestic-order-approval-rules.ts).
+    clientId: "rf-service-system",
+    kind: "DOMESTIC_ORDER_FINAL_SHIPMENT",
+    // 🔵 A/S 안에서는 「기타건 최종 출하 승인」이다(그쪽
+    // domain/shipment-approval-route.ts 의 SHIPMENT_APPROVAL_ROUTE_SCOPE_LABELS).
+    // 여기서 「결재」로 적는 것은 이 글자가 **남의 시스템 줄과 섞여 서는**
+    // 자리(관리자 화면·메일 본문)의 말이기 때문이다 — 위 다섯이 모두 「…결재」로
+    // 끝난다. 🔴 한쪽을 고칠 때 다른 쪽을 따라 고치지 마라.
+    label: "기타건 최종 출하 결재",
     systemLabel: "A/S 관리",
   },
   {
@@ -146,7 +164,7 @@ export type SubmittedApprovalKindForm = Pick<FormData, "get">;
  * 브라우저의 규칙이라, 안 실린 것을 「모름」으로 보면 **끄는 일이 영영 저장되지
  * 않는다.** 분류 고르개(`<select>`)와 다른 점이고, 다를 수밖에 없다.
  *
- * 🔵 그래서 이 함수는 **화면에 그려진 다섯 줄 전부**를 훑는다. 다섯은 코드가
+ * 🔵 그래서 이 함수는 **화면에 그려진 줄 전부**를 훑는다. 그 목록은 코드가
  * 가진 상수라 「화면에 있었나」를 따로 실어 보낼 까닭이 없다(종 설정 표가
  * `KIND_MARKER_FIELD` 를 쓰는 것은 종류 목록이 저쪽 것이기 때문이다).
  */

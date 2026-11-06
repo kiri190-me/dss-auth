@@ -23,6 +23,9 @@ import { getSiteNotificationFeed } from "@/lib/notifications/site-service";
  * 답(200): { items, count, sources, degraded, dismissed, acknowledged }
  *   — 앞 넷은 조각 3 이 포털 자신에게 내주는 모양 그대로다(merge.ts 의
  *     PortalNotificationFeed = `@dss/ui` 의 NotificationBell 이 받는 모양).
+ *   — 🔴 `count` 는 **`items` 의 줄 수**다(2026-11-06 사용자 결정 — merge.ts 의
+ *     그 칸 주석). 사이트가 제 알림을 이어 붙일 때 **제 몫도 줄로 세야** 그
+ *     사이트의 종에서 배지와 줄이 맞는다.
  *   — 🔴 `dismissed: string[]` 는 **그 사람이 지운(✕) 알림의 열쇠**인데 **부른
  *     사이트 몫만** 담긴다(남의 시스템에서 지운 것은 안 간다 — 까닭은
  *     notifications/dismissals.ts 의 applySiteDismissals). 그 사이트가 제 손으로

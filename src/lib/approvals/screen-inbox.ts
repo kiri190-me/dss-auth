@@ -55,7 +55,7 @@ export type ScreenApprovalItem = {
   sourceName: string;
   /** 그 시스템 안에서 이 결재건을 가리키는 값. */
   id: string;
-  /** 기계가 읽는 갈래(`REPAIR_INSPECTION` 등 다섯 — kinds.ts). */
+  /** 기계가 읽는 갈래(`REPAIR_INSPECTION` 등 — kinds.ts 의 갈래 표). */
   kind: string;
   /**
    * 사람이 읽는 갈래 이름.

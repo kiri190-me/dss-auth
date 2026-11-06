@@ -7,7 +7,13 @@ import {
   parseDismissalKey,
   readDismissalKeys,
 } from "./dismissals";
-import type { PortalNotificationFeed, PortalNotificationItem } from "./merge";
+import {
+  mergeSourceOutcomes,
+  parseSourceFeed,
+  type PortalNotificationFeed,
+  type PortalNotificationItem,
+} from "./merge";
+import type { NotificationSource } from "./sources";
 
 /** 종에 그려지는 한 줄. 열쇠는 merge.ts 가 만드는 모양 그대로다. */
 function item(over: Partial<PortalNotificationItem> = {}): PortalNotificationItem {
@@ -209,6 +215,109 @@ test("🔴 ⑥ 숫자가 0 아래로 내려가지 않는다", () => {
   assert.deepEqual(applied.items, []);
   assert.equal(applied.count, 0);
   assert.equal(applied.sources[0].count, 0);
+});
+
+/* ── 🔴 배지 숫자 = 종을 열었을 때 **보이는 줄 수** (2026-11-06 사용자 결정) ── */
+
+/** 물어볼 곳 한 군데. 주소는 시험 안에서 쓰이지 않는다(parse 는 네트워크를 모른다). */
+const AS_SOURCE: NotificationSource = {
+  clientId: "rf-service-system",
+  name: "DSS A/S 관리 시스템",
+  notificationsUrl: "http://192.168.0.12:3000/api/integration/notifications",
+  settingsUrl: "http://192.168.0.12:3000/api/integration/notification-settings",
+};
+
+/**
+ * A/S 가 실제로 내주는 모양 한 줄(그쪽 ExternalNotificationItem).
+ * 🔴 `targetKey` 를 싣는다 — 저쪽이 **건**을 세는 재료이고, 포털이 그것을 더 이상
+ * 쓰지 않는다는 것이 이 절에서 재는 것이다.
+ */
+function external(kind: string, targetKey: string) {
+  return {
+    id: `${kind}:${targetKey}`,
+    kind,
+    kindLabel: "접수건 결재 대기",
+    targetKey,
+    subject: `${targetKey} 결재 대기`,
+    detail: "가나상사 · 신호발생기",
+    href: `http://192.168.0.12:3000/repair-cases/${targetKey}`,
+  };
+}
+
+/**
+ * 🔴 **2026-11-06 에 사람이 실제로 본 표본**(번호만 가짜로 바꿨다).
+ *
+ * A/S 가 **줄 6개 + `count: 4`** 를 내준다. 줄 여섯이 가리키는 **건**은 넷이라
+ * (두 건에는 결재 대기 줄과 납기 임박 줄이 함께 걸려 있다) 저쪽은 4 로 센다.
+ * 그 상태에서 한 줄을 ✕ 로 지웠더니 화면이 이랬다:
+ *
+ *   목록 5줄 · A/S 자기 종 4 · 다른 사이트 종 3
+ *
+ * 🔴 **이제 맞아야 하는 값은 「남은 줄 수」 하나다 — 다섯.**
+ */
+function asSample(): PortalNotificationFeed {
+  const parsed = parseSourceFeed(
+    {
+      items: [
+        external("REPAIR_CASE_APPROVAL", "D260101"),
+        external("REPAIR_CASE_DUE_DATE_NEAR", "D260101"), // 🔴 같은 건의 둘째 줄
+        external("REPAIR_CASE_APPROVAL", "D260102"),
+        external("REPAIR_CASE_DUE_DATE_NEAR", "D260102"), // 🔴 같은 건의 둘째 줄
+        external("REPAIR_CASE_APPROVAL", "D260103"),
+        external("REPAIR_CASE_APPROVAL", "D260104"),
+      ],
+      count: 4, // 🔴 저쪽이 센 **건** 수. 포털은 이 값을 읽지 않는다.
+    },
+    AS_SOURCE
+  );
+  return mergeSourceOutcomes([{ source: AS_SOURCE, ok: true, feed: parsed }]);
+}
+
+test("🔴 표본 그대로 — 줄 6개·저쪽 count 4·지움 1 이면 배지는 **5** 다", () => {
+  const feed = asSample();
+  // 🔵 먼저 「무엇을 재는지」를 못 박는다. 표본이 여섯 줄이 아니면 아래 숫자는
+  //    아무것도 뜻하지 않는다.
+  assert.equal(feed.items.length, 6);
+  assert.equal(feed.count, 6, "지우기 전부터 배지는 줄 수와 같아야 한다");
+
+  const applied = applyDismissals(
+    feed,
+    // 🔴 한 건의 **두 줄 가운데 하나**를 지운다. 그 건은 납기 임박 줄로 아직
+    //    살아 있어, 저쪽은 애초에 이 지움을 제 숫자에서 뺄 수가 없었다.
+    new Set(["rf-service-system:REPAIR_CASE_APPROVAL:D260101"])
+  );
+
+  assert.equal(applied.items.length, 5);
+  // 🔴 **여기가 전에 3 이었다**(4 − 1 — 「건 수」에서 「줄 수」를 뺀 값).
+  assert.equal(applied.count, 5);
+  // 🔵 시스템별 수도 같은 잣대다 — 앱 런처 타일의 점이 이 값을 본다.
+  assert.equal(applied.sources[0].count, 5);
+});
+
+test("🔴 그 건의 **유일한 줄**을 지워도 답은 남은 줄 수다 — 한 경우만 재면 틀린 산수가 통과한다", () => {
+  const feed = asSample();
+
+  // D260104 는 줄이 하나뿐인 건이다. 「한 건이 통째로 사라지는」 경우라, 저쪽
+  // 숫자를 재료로 쓰는 식들은 여기서 위 표본과 다른 답을 낸다:
+  //   · `count − 지운 줄 수`          → 4 − 1 = 3  (틀림)
+  //   · `Math.min(count, 남은 줄 수)` → min(4, 5) = 4  (틀림)
+  // 🔴 보이는 줄은 두 경우 모두 다섯이고, 맞는 답도 둘 다 다섯이다.
+  const one = applyDismissals(feed, new Set(["rf-service-system:REPAIR_CASE_APPROVAL:D260104"]));
+  assert.equal(one.items.length, 5);
+  assert.equal(one.count, 5);
+  assert.equal(one.sources[0].count, 5);
+
+  // 🔴 그리고 **한 건의 두 줄을 다 지우면 넷**이다 — 줄 둘이 빠졌으니 둘이 준다.
+  //    「건으로 세던」 옛 셈에서는 한 건이 사라졌으니 하나만 줄었을 자리다.
+  const both = applyDismissals(
+    feed,
+    new Set([
+      "rf-service-system:REPAIR_CASE_APPROVAL:D260101",
+      "rf-service-system:REPAIR_CASE_DUE_DATE_NEAR:D260101",
+    ])
+  );
+  assert.equal(both.items.length, 4);
+  assert.equal(both.count, 4);
 });
 
 test("🔴 degraded 와 sources 의 차례·ok 는 그대로다", () => {

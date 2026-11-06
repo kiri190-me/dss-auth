@@ -23,8 +23,10 @@ import type { NotificationSource } from "./sources";
  * 번 붙어 어디로도 가지 못한다.
  *
  * 🔴 A/S 의 `targetKey` 는 일부러 옮기지 않는다. 그 값은 「같은 대상은 한 번만
- * 센다」는 저쪽 규칙의 재료인데, 받는 쪽이 그것으로 개수를 다시 세면 A/S 의 종과
- * 포털의 종이 서로 다른 숫자를 보여 준다. 개수는 **저쪽이 센 값**을 쓴다.
+ * 센다」는 저쪽 규칙의 재료인데, **포털은 그 규칙을 쓰지 않는다** — 배지에 찍는
+ * 것은 보이는 줄 수다(아래 `count` 주석, 2026-11-06). 쓸 데가 없는 값을 날라
+ * 두면 언젠가 그것으로 다시 세는 사람이 생기고, 그 순간 종에 보이는 줄 수와
+ * 배지가 또 갈린다.
  */
 export type PortalNotificationItem = {
   /**
@@ -54,13 +56,40 @@ export type PortalNotificationSourceStatus = {
   name: string;
   /** 물어봐서 답을 받았는가. false 면 그 시스템 줄은 비어 있다. */
   ok: boolean;
-  /** 그 시스템의 배지 숫자. 못 물어봤으면 0. */
+  /**
+   * 🔴 **그 시스템에서 온 줄 수.** 못 물어봤으면 0.
+   *
+   * 아래 `count` 와 **같은 잣대**다(2026-11-06). 이 숫자를 보는 곳은 앱 런처
+   * 타일의 빨간 점 하나뿐이고(shouldShowTileDot — `> 0` 만 묻는다), 사이트에
+   * 내주는 답에도 그대로 실린다. 두 잣대가 섞이면 「종에는 다섯 줄인데 타일
+   * 쪽 수는 넷」이 되어, 뒷날 그 수를 화면에 쓰는 사람이 조용히 틀린다.
+   */
   count: number;
 };
 
 export type PortalNotificationFeed = {
   items: PortalNotificationItem[];
-  /** 배지에 찍을 숫자. 각 시스템이 센 값의 합이다. */
+  /**
+   * 배지에 찍을 숫자. 🔴 **`items` 의 줄 수**다.
+   *
+   * ── 🔴 2026-11-06 에 뜻이 뒤집혔다 ─────────────────────────────────────
+   * 전에는 「각 시스템이 센 값의 합」이었다. 각 시스템은 저마다의 규칙으로 세고
+   * (A/S 는 「같은 대상은 한 번만」 — 한 접수 건에 결재가 둘 걸려도 1), 포털은
+   * 그 규칙을 모르므로 **받은 숫자를 그대로 믿는다**는 것이 그때의 설계였다.
+   *
+   * 🔴 **사용자가 그 설계를 뒤집었다**: 「종을 눌렀을 때 나오는 알림의 수와
+   * 알림종의 숫자가 동일했으면 좋겠어.」 실제로 어긋났다 — 종을 열면 여섯 줄인데
+   * 배지는 4 였고(A/S 가 건으로 세어 보냈다), 한 줄을 ✕ 로 지우자 다섯 줄에
+   * 배지 3 이 되었다.
+   *
+   * 그래서 이제 포털은 **줄을 센다.** 「시스템마다 다른 세는 규칙」은 포털의
+   * 숫자에 더 이상 들어오지 않는다(parseSourceFeed 가 저쪽 `count` 를 아예 읽지
+   * 않는다).
+   *
+   * 🔵 **그 대신 치르는 값**: 한 대상에 줄이 둘 걸린 사람의 배지가 2 가 된다.
+   * 「할 일 두 개」가 아니라 「볼 것 두 줄」을 뜻하게 된 것이고, 그것이 사람이
+   * 눈으로 세는 것과 같다.
+   */
   count: number;
   sources: PortalNotificationSourceStatus[];
   /**
@@ -191,10 +220,23 @@ function isNavigableHref(href: string): boolean {
  * 줄 하나가 이상하면 그 줄만 버린다. 한 줄 때문에 그 시스템 전체를 버리면,
  * 멀쩡한 나머지 알림까지 사라진다.
  *
- * 개수는 저쪽이 센 값을 쓰되 **남은 줄 수를 넘지 못하게 깎는다.** 정상이라면
- * 저쪽 개수는 언제나 줄 수 이하다(같은 대상을 한 번만 세므로). 넘는다면 답이
- * 깨졌거나 우리가 줄을 버린 것이고, 어느 쪽이든 「보이는 것보다 큰 숫자」가
- * 배지에 찍히는 편이 더 나쁘다.
+ * ── 🔴 개수는 **남은 줄 수**다 — 저쪽이 보낸 `count` 를 읽지 않는다 ──────────
+ * **2026-11-06 사용자 결정**(위 `PortalNotificationFeed.count` 주석). 앞서는
+ * `Math.min(저쪽이 센 값, 줄 수)` 였고, 그 「저쪽이 센 값」은 A/S 의 경우 **건**
+ * 이었다(한 접수 건에 결재가 둘 걸려도 1). 그래서 종을 열면 여섯 줄인데 배지는
+ * 4 였다.
+ *
+ * 🔴 **그 자리를 여기로 잡은 까닭**: `count` 가 들어오는 문이 이 함수 하나다.
+ * 여기서 줄 수로 바꿔 두면 아래 `mergeSourceOutcomes` 의 합도, 지움·확인이
+ * 빼는 뺄셈(dismissals.ts 의 applyDismissals)도 **고칠 것 없이** 줄 수로 맞는다 —
+ * 「`count` 는 언제나 `items.length` 와 같다」는 불변식이 여기서 한 번 서면 그
+ * 뒤로는 저절로 지켜진다. 뺄셈 쪽에서 「남은 줄을 다시 세는」 길도 있었지만,
+ * 그러면 **거르기 전의 숫자**(캐시에 들어가는 값·못 읽었을 때 그대로 나가는 값)는
+ * 여전히 저쪽이 센 건 수로 남아 두 숫자가 갈린다.
+ *
+ * 🔵 **상한에 걸려도 배지와 목록은 여전히 같다.** 줄을 `MAX_ITEMS_PER_SOURCE` 에서
+ * 자르는데 숫자를 그 자른 목록에서 세므로 둘이 함께 깎인다 — 「31건인데 30으로
+ * 보인다」가 생길 수 없어 「30+」 같은 표시를 둘 까닭이 없다.
  */
 export function parseSourceFeed(raw: unknown, source: NotificationSource): SourceFeed {
   if (typeof raw !== "object" || raw === null) return { items: [], count: 0 };
@@ -227,13 +269,9 @@ export function parseSourceFeed(raw: unknown, source: NotificationSource): Sourc
     });
   }
 
-  const rawCount = (raw as { count?: unknown }).count;
-  const reported =
-    typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0
-      ? Math.floor(rawCount)
-      : 0;
-
-  return { items, count: Math.min(reported, items.length) };
+  // 🔴 `raw.count` 를 **읽지 않는다.** 모양이 어떻든 상관이 없어졌다 — 배지에
+  //    찍히는 것은 바로 위에서 추려 낸 이 줄들의 수다(머리말).
+  return { items, count: items.length };
 }
 
 /** 한 시스템에 물어본 뒤의 상태. 실패도 값으로 다룬다 — 던지지 않는다. */

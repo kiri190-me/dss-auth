@@ -90,6 +90,37 @@ test("🔴 포털이 모르는 갈래는 빼되 그 수를 센다 — 0 이 아�
   assert.equal(selection.skippedDisabled, 0);
 });
 
+test("🔴 기타건 최종 출하 결재는 **모르는 갈래가 아니다** — 켜면 메일이 나간다", () => {
+  // 2026-11-06 에 A/S 가 낸 새 갈래다. 갈래 표에 한 줄이 없으면 위 시험이 재는
+  // `skippedUnknownKind` 로 떨어져 **켜 두어도 한 통도 안 나간다** — 그 사실은
+  // 작업 기록의 숫자 하나로만 남는다(kinds.ts 머리말).
+  const misc = item(
+    "rf-service-system",
+    "DOMESTIC_ORDER_FINAL_SHIPMENT",
+    "DOMESTIC_ORDER_FINAL_SHIPMENT:DO-1"
+  );
+  const kindKey = approvalKindKey("rf-service-system", "DOMESTIC_ORDER_FINAL_SHIPMENT");
+
+  const on = selectApprovalsToMail({
+    items: [misc],
+    enabledKeys: new Set([kindKey]),
+    alreadySent: new Set(),
+  });
+  assert.deepEqual(on.toSend, [misc]);
+  assert.equal(on.skippedUnknownKind, 0);
+
+  // 🔴 그리고 **끈 상태에서는 「꺼짐」으로 빠진다** — 「모름」이 아니다. 둘이
+  //    뒤바뀌면 관리자가 켜도 아무 일이 안 일어나는데 기록은 멀쩡해 보인다.
+  const off = selectApprovalsToMail({
+    items: [misc],
+    enabledKeys: new Set(),
+    alreadySent: new Set(),
+  });
+  assert.deepEqual(off.toSend, []);
+  assert.equal(off.skippedUnknownKind, 0);
+  assert.equal(off.skippedDisabled, 1);
+});
+
 test("🔴 같은 열쇠가 두 번 오면 한 번만 싣는다 — 기록 한 문장이 통째로 실패한다", () => {
   const selection = selectApprovalsToMail({
     items: [LEAVE_1, LEAVE_1],

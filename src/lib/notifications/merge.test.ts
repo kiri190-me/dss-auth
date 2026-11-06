@@ -87,20 +87,40 @@ test("🔴 눌러서 갈 수 없는 링크는 버린다 — javascript: 는 종�
   );
 });
 
-test("개수는 저쪽이 센 값을 쓴다 — 목록 길이를 다시 세지 않는다", () => {
-  // 같은 대상에 결재가 둘 걸린 사람은 줄이 둘이어도 배지는 1이다(A/S 의 규칙).
-  // 여기서 길이를 세면 A/S 의 종과 포털의 종이 다른 숫자를 보여 준다.
+test("🔴 개수는 **보이는 줄 수**다 — 저쪽이 센 값을 쓰지 않는다(2026-11-06 사용자 결정)", () => {
+  // 🔴 뜻이 뒤집힌 시험이다. 처음에는 「개수는 저쪽이 센 값을 쓴다 — 목록 길이를
+  // 다시 세지 않는다」를 재고 있었다. 까닭은 A/S 가 **건**으로 세기 때문이었다 —
+  // 같은 대상에 결재가 둘 걸린 사람은 줄이 둘이어도 저쪽 배지가 1 이고, 여기서
+  // 길이를 세면 두 종이 다른 숫자를 말하게 된다는 것이었다.
+  //
+  // 🔴 2026-11-06 사용자가 그 설계를 뒤집었다: 「종을 눌렀을 때 나오는 알림의
+  // 수와 알림종의 숫자가 동일했으면 좋겠어.」 그래서 이제 **줄을 센다** — 두 종이
+  // 갈리는 것은 A/S 가 제 배지도 줄로 세게 고쳐야 풀리는 일이고(그쪽 저장소),
+  // 포털이 건 수를 따라가는 것으로는 사용자가 본 어긋남이 안 풀린다.
   const feed = parseSourceFeed(
     { items: [item({ id: "a" }), item({ id: "b" })], count: 1 },
     AS
   );
   assert.equal(feed.items.length, 2);
-  assert.equal(feed.count, 1);
+  assert.equal(feed.count, 2);
 });
 
-test("보이는 줄보다 큰 숫자는 깎는다", () => {
-  const feed = parseSourceFeed({ items: [item()], count: 99 }, AS);
-  assert.equal(feed.count, 1);
+test("🔴 저쪽 숫자가 크든 작든 쳐다보지 않는다 — 버린 줄은 숫자에서도 빠진다", () => {
+  // 큰 값(깨진 답)도,
+  assert.equal(parseSourceFeed({ items: [item()], count: 99 }, AS).count, 1);
+  // 아예 없는 값도,
+  assert.equal(parseSourceFeed({ items: [item()] }, AS).count, 1);
+  // 모양이 글자인 값도 같다.
+  assert.equal(parseSourceFeed({ items: [item()], count: "셋" }, AS).count, 1);
+
+  // 🔴 그리고 그릴 수 없어 **우리가 버린 줄**은 숫자에도 없다 — 「보이는 것보다
+  // 큰 숫자」가 배지에 찍히는 길이 아예 없다.
+  const dropped = parseSourceFeed(
+    { items: [item({ id: "a", href: "javascript:alert(1)" }), item({ id: "b" })], count: 2 },
+    AS
+  );
+  assert.equal(dropped.items.length, 1);
+  assert.equal(dropped.count, 1);
 });
 
 test("모양이 깨진 답에도 던지지 않는다", () => {
@@ -129,18 +149,27 @@ test("종류 이름이 없어도 알림 자체는 살린다", () => {
   assert.equal(feed.items[0].kindLabel, "");
 });
 
-test("🔴 targetKey 는 옮기지 않는다 — 받는 쪽이 개수를 다시 세면 안 된다", () => {
+test("🔴 targetKey 는 옮기지 않는다 — 이제 포털이 셀 때 쓰지 않는 값이다", () => {
+  // 🔴 **단언은 그대로이고 까닭이 바뀌었다.** 전에는 「받는 쪽이 그것으로 개수를
+  // 다시 세면 두 종이 다른 숫자를 말한다」가 까닭이었다. 2026-11-06 부터 포털은
+  // **줄을 세므로**(위 그 시험) 이 값으로 셀 일 자체가 없다 — 쓸 데가 없는 값을
+  // 날라 두면 언젠가 그것으로 다시 세는 사람이 생기고, 그 순간 배지가 종에 보이는
+  // 줄 수와 또 갈린다. 그래서 **더더욱** 옮기지 않는다.
   const feed = parseSourceFeed({ items: [item()], count: 1 }, AS);
   assert.ok(!("targetKey" in feed.items[0]), JSON.stringify(feed.items[0]));
 });
 
-test("한 시스템이 수만 줄을 보내도 상한에서 끊는다", () => {
+test("한 시스템이 수만 줄을 보내도 상한에서 끊는다 — 🔴 배지도 같이 깎인다", () => {
+  // 🔴 상한에 걸려도 **배지와 목록이 여전히 같다.** 줄을 자른 뒤에 그 목록을
+  // 세기 때문이다 — 「700건인데 200으로 보인다」가 생길 수 없어 「200+」 같은
+  // 표시를 둘 까닭이 없다(merge.ts 의 parseSourceFeed 주석).
   const many = Array.from({ length: MAX_ITEMS_PER_SOURCE + 500 }, (_, i) =>
     item({ id: `RC-${i}` })
   );
   const feed = parseSourceFeed({ items: many, count: many.length }, AS);
   assert.equal(feed.items.length, MAX_ITEMS_PER_SOURCE);
   assert.equal(feed.count, MAX_ITEMS_PER_SOURCE);
+  assert.equal(feed.count, feed.items.length);
 });
 
 // ─────────────────────────────────────────────────────────────── 합치기
