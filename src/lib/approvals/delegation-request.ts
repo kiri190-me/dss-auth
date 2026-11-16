@@ -16,7 +16,7 @@ import type { ActingApproverSubjects, DelegationFailureCode, DelegationWriteResu
  *   Authorization: Basic base64(client_id:client_secret)
  *   Content-Type: application/x-www-form-urlencoded
  *
- *   sub=<포털 users.id (ID 토큰의 sub)>&action=<acting|list|create|revoke>&…
+ *   sub=<포털 users.id (ID 토큰의 sub)>&action=<acting|list|candidates|create|revoke>&…
  *
  * 방향도 자격증명도 앞의 통로들과 **같다**(알림 읽기·지움·확인·결재함·결재 생성).
  * 사이트의 서버가 제 `client_secret` 으로 자기를 밝히고, 누구의 것인지는 `sub` 로
@@ -24,19 +24,20 @@ import type { ActingApproverSubjects, DelegationFailureCode, DelegationWriteResu
  * 부른다 — 베끼면 한쪽만 고치는 날 조용히 갈라지고, **갈라진 것이 보안 판정이면
  * 증상이 없어** 아무도 모른다(notifications/site-feed.ts 머리말).
  *
- * ── 🔴 `sub` 는 **누구의 자격으로 묻는가**다. 네 갈래 모두 같다 ───────────
+ * ── 🔴 `sub` 는 **누구의 자격으로 묻는가**다. 다섯 갈래 모두 같다 ─────────
  * `acting` 은 「이 사람이 지금 누구를 대신할 수 있나」, `list` 는 「이 사람이 볼 수
- * 있는 위임」, `create`·`revoke` 는 「이 사람이 누른다」. 🔴 그래서 `sub` 가 바뀌면
- * **답도 자격도 함께 바뀐다** — 사이트가 `sub` 에 아무나 적어 보낼 수 있다는 사실이
- * 여기서는 쓰기까지 닿는다. 막는 것은 앞의 통로들과 같은 문 ⑤·⑥ 이고, 그것을
+ * 있는 위임」, `create`·`revoke` 는 「이 사람이 누른다」. `candidates` 만 결이 조금
+ * 다르다 — **돌려주는 줄은 누구에게나 같고** `sub` 는 **이메일을 실을지**만 가른다
+ * (`candidatesForActor`). 🔴 그래서 `sub` 가 바뀌면 **답도 자격도 함께 바뀐다** —
+ * 사이트가 `sub` 에 아무나 적어 보낼 수 있다는 사실이 여기서는 쓰기까지 닿는다. 막는 것은 앞의 통로들과 같은 문 ⑤·⑥ 이고, 그것을
  * 받아들이는 까닭도 같다(site-feed.ts 맨 위의 ⚠️ 문단). 🔵 여기서 더 좁혀지는 것이
  * 하나 있다: **남의 결재권을 맡기거나 거두는 일은 포털 관리자만** 할 수 있고, 그
  * 판정은 `sub` 가 가리키는 사람의 `users.is_portal_admin` 으로 한다(delegation.ts).
  *
- * ── 🔴 넷 다 POST 다. GET 을 열지 않는다 ─────────────────────────────────
- * `acting` 과 `list` 는 읽기지만 주소에 `sub` 를 실으면 **사람 번호가 접근 로그·프록시
- * 로그에 그대로 남는다.** 결재함 통로(approvals/route.ts)와 같은 까닭이고, 길이 둘이면
- * 둘 다 지켜야 한다.
+ * ── 🔴 다섯 다 POST 다. GET 을 열지 않는다 ───────────────────────────────
+ * `acting`·`list`·`candidates` 는 읽기지만 주소에 `sub` 를 실으면 **사람 번호가 접근
+ * 로그·프록시 로그에 그대로 남는다.** 결재함 통로(approvals/route.ts)와 같은 까닭이고,
+ * 길이 둘이면 둘 다 지켜야 한다.
  *
  * ── 🔴 못 물었을 때는 **「위임 없음」이다. 거절이 아니다** (2026-11-16 결정) ──
  * 각 시스템은 이 통로에 **3초** 상한을 걸고 묻는다. 넘거나 깨지면 **위임이 없는
@@ -56,8 +57,8 @@ import type { ActingApproverSubjects, DelegationFailureCode, DelegationWriteResu
  * ============================================================================
  */
 
-/** 이 통로가 받는 일 넷. 🔴 **모르는 값은 조용히 넘기지 않고 400 이다**(아래). */
-export const DELEGATION_ACTIONS = ["acting", "list", "create", "revoke"] as const;
+/** 이 통로가 받는 일 다섯. 🔴 **모르는 값은 조용히 넘기지 않고 400 이다**(아래). */
+export const DELEGATION_ACTIONS = ["acting", "list", "candidates", "create", "revoke"] as const;
 export type DelegationAction = (typeof DELEGATION_ACTIONS)[number];
 
 /**
@@ -159,6 +160,123 @@ export type AllDelegationsResult =
   | { ok: true; view: AllDelegationsView }
   | { ok: false; reason: "FORBIDDEN" };
 
+/* ------------------------------------------------------------------ */
+/* 대리인 고르개 — 이름까지만, 이메일은 **물은 사람에 따라**            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 대리인으로 세울 수 있는 **계정 상태**.
+ *
+ * 🔴 **쓰기 쪽도 같은 값을 본다**(db/mutations/approval-delegations.ts 의
+ * `isUsableUser`). 한쪽만 바꾸면 **넓힌 쪽에서는 고를 수는 있는데 저장이 거절되고**,
+ * 좁힌 쪽에서는 **세울 수 있는 사람이 목록에 없다** — 둘 다 까닭이 화면에 적히지 않는
+ * 모양이다. 🔵 조회가 이 상수로 거른다(db/queries/approval-delegations.ts).
+ *
+ * 🔴 **그 쓰기 쪽은 아직 이 상수를 끌어다 쓰지 않는다** — `isUsableUser` 는 "ACTIVE"
+ * 를 직접 적는다. 묶어 두는 편이 낫지만 그 파일은 이 조각에서 건드리지 않았다. 이
+ * 값을 고치는 사람은 **그 한 줄을 함께 고쳐야 한다**(어긋나도 `tsc` 는 조용하다).
+ *
+ * 🔵 A/S 는 같은 자리를 네 조건으로 적는다(안 지워짐·승인됨·활성·안 잠김). 포털의 사람
+ * 상태는 셋뿐이라(PENDING · ACTIVE · SUSPENDED) 그 넷이 여기서는 한 값으로 접힌다 —
+ * 승인 대기는 아직 사내 사람으로 확정되지 않은 계정이라 결재권을 맡을 수 없다.
+ */
+export const DELEGATE_CANDIDATE_STATUS = "ACTIVE" as const;
+
+/**
+ * 대리인 고르개 한 줄 — **싣는 칸이 셋뿐이다.**
+ *
+ * 🔴 `is_portal_admin` 도 `status` 도 싣지 않는다. 이 목록은 **포털 관리자가 아닌
+ * 사람에게도 내려가므로**(제 결재권을 맡기려면 「누구에게」를 골라야 한다), 사람 칸을
+ * 넉넉히 실은 다른 목록을 돌려쓰면 **사내 전원의 상태와 권한이 승인함의 HTML 에 그대로
+ * 실려 나간다.** A/S 가 같은 자리에서 같은 결정을 했다
+ * (queries/approval-route-delegations.ts 의 `listApprovalRouteDelegateCandidates`).
+ */
+export type DelegateCandidate = {
+  /** 포털 `users.id`. 받는 쪽이 사람을 가리키는 말이 `sub` 하나라 그 이름으로 적는다. */
+  sub: string;
+  /** 포털 `users.display_name`. 🔴 `users.name` 은 A/S 에만 있는 칸이다. */
+  name: string;
+  /**
+   * 🔴 **포털에서 이 칸은 원래 비어 있을 수 있다**(schema/users.ts: 카카오 이메일은
+   * 선택 동의라 안 올 수 있다). A/S 의 같은 목록과 다른 점이라, 받는 쪽은 `null` 을
+   * **정상**으로 그려야 한다. 🔴 그리고 **물은 사람에 따라 한 번 더 비워진다**
+   * (아래 `candidatesForActor`).
+   */
+  email: string | null;
+};
+
+/**
+ * 고르개가 통째로 돌려주는 것 — **목록과 「이 답이 어떤 답인가」.**
+ *
+ * 🔵 깃발을 따로 두는 모양이 이 저장소에 이미 있다: 「모두의 위임」이 잘렸는지를
+ * `finishedTruncated` 로 함께 내보낸다(`AllDelegationsView`). **목록만으로는 알 수 없는
+ * 사실**을 목록 옆에 적어 주는 같은 자리다 — 받는 쪽이 글자로 박지 않게.
+ */
+export type DelegateCandidateList = {
+  candidates: DelegateCandidate[];
+  /**
+   * 🔴 **「이메일이 있다」가 아니다. 「이 답에서 이메일을 가리지 않았다」다.**
+   *
+   * 값은 **부른 사람이 포털 관리자인가** 하나로 정해진다. 🔴 **실린 이메일을 세어
+   * 정하지 않는다** — 관리자가 물었는데 후보 전원의 이메일 칸이 마침 비어 있는 날
+   * (개발 DB 에서 다섯 중 넷이 그랬다) 깃발이 거짓이 되고, 화면은 **있지도 않은 권한
+   * 문제를 안내한다.** 이 칸이 말하는 것은 **문이 열렸는가**이지 결과가 아니다.
+   *
+   * 🔴 그래서 받는 쪽은 `emailsIncluded === true && email === null` 을
+   * **「이 사람은 이메일이 등록돼 있지 않다」**로 읽을 수 있다 — 그러라고 있는 칸이다.
+   * 거짓일 때의 `null` 은 **「당신에게는 안 보여 준다」**이고, 그 둘을 가를 길이 없던
+   * 것이 이 칸이 생긴 까닭이다(2026-11-16).
+   */
+  emailsIncluded: boolean;
+};
+
+/**
+ * 🔴 **이메일을 누구에게 내릴지 정하는 유일한 자리.**
+ *
+ * ── 🔴 왜 조회가 아니라 여기인가 ───────────────────────────────────────
+ * 조회는 **언제나 이메일을 싣는다.** 가리는 일은 「누가 물었나」를 아는 쪽의 일이고,
+ * 그것을 아는 것은 통로다 — 조회는 인자가 아예 없어 부른 사람을 모른다. 조회가 세션을
+ * 들여다보고 알아서 가리면 「왜 어떤 때는 이메일이 없나」를 설명할 자리가 사라진다.
+ *
+ * ── 🔴 왜 A/S 와 **자리가 다른가** ─────────────────────────────────────
+ * A/S 는 이 일을 **화면**이 한다(app/(app)/users/page.tsx 가 권한에 따라 `null` 로
+ * 바꾼다). 포털에는 그럴 화면이 없다 — **부르는 것이 브라우저가 아니라 저쪽 서버**라
+ * 이 통로가 **마지막 문**이고, 한 번 내보낸 값은 저쪽 서버에 그대로 남는다. 「A/S 는
+ * 화면에서 하는데 여기는 왜」로 되돌리지 마라.
+ *
+ * ── 🔴 왜 포털 관리자만인가 ────────────────────────────────────────────
+ * 이름이 같은 사람을 갈라야 하는 쪽에는 필요하고(관리자가 **남의** 결재권을 맡길 때),
+ * 제 결재권을 맡기는 사람에게는 필요 없다. 🔵 한 번에 **사내 전원의 이메일**이 실려
+ * 나가는 목록이라 필요한 쪽에만 연다.
+ *
+ * 🔴 **가린 사실도 함께 돌려준다**(`emailsIncluded` — 위 타입). 판정이 한 곳에 모여
+ * 있어야 「가렸는가」와 「가렸다고 말했는가」가 갈라지지 않는다. 깃발만 따로 지어 붙이는
+ * 자리를 만들면, 그 둘이 어긋난 날 **화면은 틀린 안내를 아주 자신 있게** 한다.
+ *
+ * @param actor 부른 사람. 🔴 **없으면 안 싣는다** — 모르는 사람에게 여는 쪽으로 기울지
+ *   않는다(문 ⑤ 가 이미 걸러 실제로는 올 수 없는 값이지만, 기본값은 닫힌 쪽이다).
+ */
+export function candidatesForActor(
+  candidates: readonly DelegateCandidate[],
+  actor: { isPortalAdmin: boolean } | null
+): DelegateCandidateList {
+  // 🔴 **부른 사람 하나로 정해진다.** 아래에서 실제로 실린 이메일을 세지 않는다
+  //    (그 까닭은 `emailsIncluded` 쪽 주석). 그래서 **후보가 한 명도 없어도** 이 값은
+  //    부른 사람 기준으로 정해진다 — 빈 목록에 거짓이 따라붙지 않는다.
+  const emailsIncluded = actor?.isPortalAdmin === true;
+  return {
+    // 🔴 칸을 하나씩 **다시 적어** 내보낸다. 받은 객체를 펼쳐 쓰면(`...candidate`) 조회가
+    //    칸을 하나 더 싣게 되는 날 그 칸이 **아무 말 없이 망으로 따라 나간다** — 이
+    //    목록은 사내 전원이라 그 한 칸이 곧 전원의 그 값이다.
+    candidates: candidates.map((candidate) => ({
+      sub: candidate.sub,
+      name: candidate.name,
+      email: emailsIncluded ? candidate.email : null,
+    })),
+    emailsIncluded,
+  };
+}
+
 export type CreateDelegationCommand = {
   /** 🔴 **실제로 누른 사람**(= 요청의 `sub`). 본인인지 관리자인지가 이 값으로 갈린다. */
   actorUserId: string;
@@ -190,7 +308,18 @@ export type RevokeDelegationCommand = {
 };
 
 /**
- * 문 여섯에 **일 넷이 더 붙는다.** 전부 바깥에서 받는다 — 진짜 DB 함수를 여기서
+ * 문 ⑤ 가 읽는 사람 줄 — 🔴 **위임 통로는 거기서 한 칸 더 본다.**
+ *
+ * `SiteRequestDeps` 의 `findUser` 는 「지금 쓸 수 있는 계정인가」(`status`)만 답하면
+ * 되지만, 여기서는 **이메일을 내릴지**가 그 사람의 `is_portal_admin` 으로 갈린다
+ * (`candidatesForActor`). 🔵 돌려주는 모양을 **좁혀** 받는 것이라 문 여섯은 그대로
+ * 지난다 — 라우트가 꽂는 함수는 앞의 통로들과 **같은 `getUserById`** 이고, 그것은
+ * 이미 이 깃발을 싣고 있다.
+ */
+export type DelegationActor = { status: string; isPortalAdmin: boolean };
+
+/**
+ * 문 여섯에 **일 다섯이 더 붙는다.** 전부 바깥에서 받는다 — 진짜 DB 함수를 여기서
  * 가져오면 시험이 이 판정들을 돌려 볼 수 없다.
  *
  * 🔴 **던지면 라우트가 503 으로 받는다**(DB 가 죽은 경우). 여기서 삼키지 않는다 —
@@ -199,7 +328,12 @@ export type RevokeDelegationCommand = {
  * 판단이고(머리말), 포털이 그 판단을 대신해 주면 저쪽은 그런 일이 있었다는 사실조차
  * 모른다.
  */
-export type DelegationDeps<C extends { clientId: string }> = SiteRequestDeps<C> & {
+export type DelegationDeps<C extends { clientId: string }> = Omit<
+  SiteRequestDeps<C>,
+  "findUser"
+> & {
+  /** 🔴 **좁혀 받는다**(위 `DelegationActor`). 문 ⑤ 는 그대로 지난다. */
+  findUser(userId: string): Promise<DelegationActor | null>;
   /**
    * 「지금」. 🔴 **한 요청에 하나만 만든다** — 조회 둘이 각자 만들면 그 사이에 끝난
    * 줄이 양쪽에서 빠지거나 양쪽에 들어간다. 🔵 시험이 시계를 고정할 수 있게 받는다.
@@ -218,6 +352,14 @@ export type DelegationDeps<C extends { clientId: string }> = SiteRequestDeps<C> 
    * 자리**가 생기는 날 조용히 다 새어 나간다(A/S 가 2026-10-26 에 같은 자리에서 겪었다).
    */
   listAll(params: { actorUserId: string; now: Date }): Promise<AllDelegationsResult>;
+  /**
+   * 대리인으로 세울 수 있는 사람 **전부**.
+   *
+   * 🔴 **인자가 없다.** 조회는 「누가 물었나」를 모른다 — 그래서 부른 사람 자신을
+   * 거르는 일도, 이메일을 가리는 일도 조회에서는 **일어날 수가 없다.** 가리는 자리는
+   * `candidatesForActor` 하나뿐이다.
+   */
+  listCandidates(): Promise<DelegateCandidate[]>;
   create(command: CreateDelegationCommand): Promise<DelegationWriteResult>;
   revoke(command: RevokeDelegationCommand): Promise<DelegationWriteResult>;
 };
@@ -341,6 +483,8 @@ export async function handleDelegationRequest<C extends { clientId: string }>(
       return acting(deps, actorUserId, now);
     case "list":
       return list(deps, params, actorUserId, now);
+    case "candidates":
+      return candidates(deps, actorUserId);
     case "create":
       return create(deps, params, actorUserId, authorized.client.clientId);
     case "revoke":
@@ -421,6 +565,34 @@ async function list<C extends { clientId: string }>(
     },
     headers: NO_STORE,
   };
+}
+
+/**
+ * 대리인으로 세울 수 있는 사람 — **승인함의 고르개가 쓰는 것.**
+ *
+ * 🔴 **인가를 따로 묻지 않는다.** 문 ⑤⑥ 을 지난 사람이면 누구나 받는다 — 제 결재권을
+ * 맡기려면 「누구에게」를 골라야 하고, 고르개가 없으면 기능 자체가 없는 것과 같다
+ * (A/S 도 같은 까닭으로 `users.view` 권한 없이 내려보낸다). 그래서 **싣는 것이 이름
+ * 까지뿐**이고(`DelegateCandidate`), 갈리는 것은 **이메일 한 칸**이다.
+ *
+ * 🔴 **부른 사람 자신을 빼지 않는다.** 「누구 기준으로 뺄까」가 하나가 아니기
+ * 때문이다 — 포털 관리자는 **남의** 결재권도 맡길 수 있어서 기준이 되는 사람이 부른
+ * 사람과 다르다. 자기에게 맡기는 줄은 `create` 의 모양 검사와 표의
+ * `…_different_users` CHECK 가 이미 막는다.
+ *
+ * 🔵 **답이 그대로 판정 함수의 돌려준 값이다**(`{ candidates, emailsIncluded }`).
+ * 여기서 한 번 더 모양을 지으면 깃발을 빠뜨리는 자리가 생긴다.
+ */
+async function candidates<C extends { clientId: string }>(
+  deps: DelegationDeps<C>,
+  actorUserId: string
+): Promise<SiteFeedResponse> {
+  // 🔴 사람 줄을 **여기서 한 번 더 읽는다.** 문 ⑤ 는 「쓸 수 있는 계정인가」만 답하고
+  //    읽은 줄을 돌려주지 않는데, 돌려주게 고치면 그 문을 함께 쓰는 **통로 여섯이 모두**
+  //    바뀐다. 같은 번호의 기본키 조회 한 번이라 값이 싸고, 아래처럼 목록과 나란히
+  //    던지면 왕복도 한 번이다.
+  const [actor, rows] = await Promise.all([deps.findUser(actorUserId), deps.listCandidates()]);
+  return { status: 200, body: candidatesForActor(rows, actor), headers: NO_STORE };
 }
 
 /**

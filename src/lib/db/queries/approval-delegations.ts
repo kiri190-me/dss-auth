@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, gt, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db/client";
 import { approvalDelegations, users } from "@/lib/db/schema";
@@ -8,21 +8,23 @@ import {
   type ActingApproverSubjects,
   type ApprovalDelegationPeriod,
 } from "@/lib/approvals/delegation";
-import type {
-  AllDelegationsResult,
-  ApprovalDelegationRow,
+import {
+  DELEGATE_CANDIDATE_STATUS,
+  type AllDelegationsResult,
+  type ApprovalDelegationRow,
+  type DelegateCandidate,
 } from "@/lib/approvals/delegation-request";
 
 /**
  * ============================================================================
- * 결재권 위임 읽기 — 판정이 보는 하나, 화면이 보는 둘
+ * 결재권 위임 읽기 — 판정이 보는 하나, 화면이 보는 둘, 고르개가 보는 하나
  * ============================================================================
  * 표는 `approval_delegations` 다(schema/approval-delegations.ts). 🔴 **판정은 여기서
  * 하지 않는다** — 줄을 읽어 순수 함수(lib/approvals/delegation.ts)에 넘길 뿐이다.
  * 「누를 수 있나」가 SQL 과 TS 두 벌로 적히면 「목록에는 뜨는데 눌리지 않는」(또는 그
  * 반대의) 짝이 생기고, 그 어긋남은 오류가 아니라 **사람이 포기할 때까지 조용하다.**
  *
- * 공개 함수 셋의 성격이 갈린다. 섞지 말 것:
+ * 공개 함수 넷의 성격이 갈린다. 섞지 말 것:
  *
  *  · `resolveActingApproverSubjects` — **판정이 쓰는 값**이다. `sub` 목록 하나뿐이고
  *    이름이 없다. 각 시스템이 결재할 때마다 묻는다
@@ -30,6 +32,8 @@ import type {
  *    사람까지 싣는다. 판정에 쓰지 마라
  *  · `listAllApprovalDelegations` — 같은 모양이지만 **남의 줄까지**다. 🔴 이것만 인가를
  *    **제 손으로** 본다. 까닭은 그 함수 머리말에 있다
+ *  · `listDelegateCandidates` — 위임 표를 아예 읽지 않는다. **사람 명부**에서 「대리인
+ *    으로 세울 수 있는 사람」을 이름까지만 뽑는다
  * ============================================================================
  */
 
@@ -235,4 +239,48 @@ export async function listAllApprovalDelegations(
       finishedLimit: FINISHED_DELEGATION_LIMIT,
     },
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* 대리인으로 세울 수 있는 사람 — 이름까지만                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 위임 고르개가 쓰는 **사람 목록**. 🔴 위임 표는 한 줄도 읽지 않는다.
+ *
+ * ── 🔴 인가를 보지 않는다. 이 목록은 **누구에게나 내려간다** ─────────────
+ * 제 결재권을 맡기려면 「누구에게」를 골라야 하고, 고르개가 없으면 기능 자체가 없는
+ * 것과 같다. 그래서 위의 `listAllApprovalDelegations` 와 달리 깃발을 묻지 않는다 —
+ * 저쪽은 돌려주는 것이 **남의 줄**이지만 이쪽은 **사내 명부의 이름**이다.
+ *
+ * ── 🔴 그 대신 싣는 칸이 셋뿐이다 ───────────────────────────────────────
+ * `is_portal_admin` 도 `status` 도 담지 않는다(`DelegateCandidate` 쪽 주석). 사람 칸을
+ * 넉넉히 실은 다른 조회(`queries/users.ts` 의 `UserRow` 등)를 돌려쓰면 **사내 전원의
+ * 상태와 권한**이 승인함의 화면에 그대로 실려 나간다.
+ *
+ * ── 🔴 이메일은 **여기서 거르지 않는다** ────────────────────────────────
+ * 누구에게 내릴지는 **부르는 쪽**이 정한다(lib/approvals/delegation-request.ts 의
+ * `candidatesForActor` — 포털 관리자에게만 싣는다). 이 함수는 **인자가 없어** 누가
+ * 물었는지 알지도 못한다. 조회가 알아서 가리기 시작하면 「왜 어떤 때는 이메일이
+ * 없나」를 설명할 자리가 사라진다.
+ *
+ * 🔴 **부른 사람 자신도 빼지 않는다**(뺄 기준이 하나가 아니다 — 통로 쪽 주석).
+ *
+ * 🔵 **상한이 없다.** 이 집합은 「사내 사람 수」라 본질적으로 작고, 잘라서 내보내면
+ * 「분명히 있는 사람인데 고르개에 안 뜬다」가 된다. `users_status_idx` 가 이 조건
+ * 그대로다.
+ */
+export async function listDelegateCandidates(): Promise<DelegateCandidate[]> {
+  return db
+    .select({ sub: users.id, name: users.displayName, email: users.email })
+    .from(users)
+    // 🔴 자격은 **쓰기 쪽과 같은 값**이어야 한다 — 넓히면 고를 수는 있는데 저장이
+    //    거절되고, 좁히면 세울 수 있는 사람이 목록에 없다. 그래서 글자를 다시 적지 않고
+    //    상수를 쓴다(delegation-request.ts 의 `DELEGATE_CANDIDATE_STATUS`).
+    //    🔴 **다만 쓰기 쪽은 아직 그 상수를 끌어다 쓰지 않는다**(mutations 의
+    //    `isUsableUser` 가 "ACTIVE" 를 직접 적는다). 이 값을 고치는 사람은 그 줄도
+    //    함께 고쳐야 한다 — 어긋나도 `tsc` 는 아무 말을 하지 않는다.
+    .where(eq(users.status, DELEGATE_CANDIDATE_STATUS))
+    // 🔵 이름순. 고르개가 사람이 훑는 목록이라 들어온 차례(= 가입순)로는 못 찾는다.
+    .orderBy(asc(users.displayName));
 }

@@ -7,6 +7,7 @@ import {
 import {
   listAllApprovalDelegations,
   listApprovalDelegationsForUser,
+  listDelegateCandidates,
   resolveActingApproverSubjects,
 } from "@/lib/db/queries/approval-delegations";
 import {
@@ -27,12 +28,16 @@ import { NO_STORE } from "@/lib/notifications/site-feed";
  *   Authorization: Basic base64(client_id:client_secret)
  *   Content-Type: application/x-www-form-urlencoded
  *
- *   sub=<포털 users.id (ID 토큰의 sub)>&action=<acting|list|create|revoke>&…
+ *   sub=<포털 users.id (ID 토큰의 sub)>&action=<acting|list|candidates|create|revoke>&…
  *
- * 일 넷:
+ * 일 다섯:
  *   · `acting` — 각 시스템의 **서버**가 결재할 때 묻는다. 답은 `{ subs, count }`
  *     이고 🔴 **`subs[0]` 은 언제나 부른 사람 자신**이다
  *   · `list`   — 승인함이 묻는다. `scope=mine`(기본) 또는 `scope=all`(포털 관리자)
+ *   · `candidates` — 승인함의 **고르개**가 묻는다. 대리인으로 세울 수 있는 사람의
+ *     `sub`·이름까지만 돌려준다. 🔴 **이메일은 포털 관리자가 물었을 때만** 실리고,
+ *     실었는지를 답이 **스스로 말한다**(`emailsIncluded`) — 그 칸이 없으면 받는 쪽이
+ *     「가려진 null」과 「원래 없는 null」을 가를 수 없다
  *   · `create` — 승인함이 지정한다
  *   · `revoke` — 승인함이 되돌린다
  *
@@ -78,6 +83,12 @@ export async function POST(request: Request) {
       // 거절한다(queries/approval-delegations.ts) — 라우트가 가리는 데 그치면 이
       // 조회를 부르는 새 자리가 생기는 날 조용히 다 새어 나간다.
       listAll: ({ actorUserId, now }) => listAllApprovalDelegations(actorUserId, now),
+      // 🔴 **여기도 인가를 보지 않는다 — 다만 까닭이 위와 정반대다.** 「모두의 위임」은
+      // 조회가 제 손으로 거절하지만, 고르개는 **아무도 거절하지 않는다**(제 결재권을
+      // 맡기려면 누구나 골라야 한다). 갈리는 것은 **이메일 한 칸**뿐이고 그 판정은
+      // 판정 층의 `candidatesForActor` 가 한다 — 가리는 일은 「누가 물었나」를 아는
+      // 쪽의 일이라, 인자도 없는 이 조회에 맡기지 않는다.
+      listCandidates: listDelegateCandidates,
       create: createApprovalDelegation,
       revoke: revokeApprovalDelegation,
       // 🔴 **앞의 통로들과 같은 통을 쓴다.** 여섯 통로가 **같은 자격증명**을 받으므로
