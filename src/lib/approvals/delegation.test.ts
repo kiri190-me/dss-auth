@@ -5,9 +5,13 @@ import {
   actingDelegateUserIdsFor,
   authorizeDelegationCreate,
   checkDelegationRevocable,
+  DELEGATION_ADMIN_ROLE,
+  DELEGATION_STAFF_ROLE,
   delegatorUserIdsFor,
   isActiveDelegation,
+  isDelegationAdmin,
   type ApprovalDelegationPeriod,
+  type DelegationActorAuthority,
 } from "./delegation";
 
 /**
@@ -179,39 +183,116 @@ test("🔴 알림도 이어 붙지 않는다 — A→B, B→C 에서 A 를 대�
   assert.deepEqual(actingDelegateUserIdsFor(rows, A, NOW), [B]);
 });
 
+// ───────────────────────────────────────────── 등급 — 역할이 가른다
+
+/**
+ * 🔴 **기본값이 「운영에 지금 있는 사람」이다** — 역할 없음(`null`), 포털 관리자 아님.
+ * 2026-11-16 실측으로 승인함에 접근이 부여된 여덟 명 **전원**이 이 모양이다. 기본값을
+ * 관리자로 두면 **막히는 쪽이 시험에서 한 번도 안 걸린다.**
+ */
+function authority(over: Partial<DelegationActorAuthority> = {}): DelegationActorAuthority {
+  return { clientRole: null, isPortalAdmin: false, ...over };
+}
+
+test("🔴 역할 ADMIN 이면 관리자다 — 포털 깃발 없이도", () => {
+  assert.equal(isDelegationAdmin(authority({ clientRole: DELEGATION_ADMIN_ROLE })), true);
+  // 🔵 짝을 함께 둔다. 한쪽만 재면 「언제나 참」도 통과한다.
+  assert.equal(isDelegationAdmin(authority()), false);
+});
+
+test("🔴 역할이 **없으면**(null) 관리자가 아니다 — 그래도 STAFF 이지 「아무것도 못 함」이 아니다", () => {
+  assert.equal(isDelegationAdmin(authority({ clientRole: null })), false);
+  // 🔴 이 사람이 **제 결재권은 맡길 수 있다**는 것이 이 조각의 핵심이다. 그 길은 아래
+  //    `authorizeDelegationCreate` 가 등급을 묻기 **전에** 열려 있다.
+  assert.equal(
+    authorizeDelegationCreate({ actorUserId: A, delegatorUserId: A, actor: authority() }).ok,
+    true
+  );
+});
+
+test("🔴 STAFF 도, 모르는 역할도 관리자가 아니다 — 기본값은 닫힌 쪽이다", () => {
+  assert.equal(isDelegationAdmin(authority({ clientRole: DELEGATION_STAFF_ROLE })), false);
+  // 다른 시스템의 역할 글자가 잘못 부여돼 있어도 ADMIN 한 글자만 본다.
+  assert.equal(isDelegationAdmin(authority({ clientRole: "AS_ENGINEER" })), false);
+  assert.equal(isDelegationAdmin(authority({ clientRole: "admin" })), false, "대소문자도 글자다");
+});
+
+test("🔴 포털 관리자는 역할이 무엇이든 관리자다", () => {
+  assert.equal(isDelegationAdmin(authority({ isPortalAdmin: true })), true);
+  assert.equal(
+    isDelegationAdmin(authority({ clientRole: DELEGATION_STAFF_ROLE, isPortalAdmin: true })),
+    true
+  );
+});
+
+test("🔴 역할 이름 둘을 글자로 못 박는다 — 등록 명령에 적는 값과 같아야 한다", () => {
+  // 포털은 역할 글자가 유효한지 검사하지 않는다(schema/clients.ts). 한 글자만 달라도
+  // 오류 없이 「아무도 관리자가 아님」이 되므로, 값 자체를 여기서 고정한다.
+  //   npm run client:register -- --client-id dss-approvals --role ADMIN --role STAFF
+  assert.equal(DELEGATION_ADMIN_ROLE, "ADMIN");
+  assert.equal(DELEGATION_STAFF_ROLE, "STAFF");
+});
+
 // ───────────────────────────────────────────── 누가 세울 수 있나
 
-test("본인은 권한과 무관하게 제 결재권을 맡길 수 있다", () => {
+test("🔴 본인은 **역할이 없어도** 제 결재권을 맡길 수 있다 — 운영의 여덟 명이 그 상태다", () => {
   const decision = authorizeDelegationCreate({
     actorUserId: A,
     delegatorUserId: A,
-    actorIsPortalAdmin: false,
+    actor: authority(),
   });
   assert.equal(decision.ok, true);
+  // 🔵 STAFF 라고 적혀 있어도 같다 — 본인 길은 등급을 아예 묻지 않는다.
+  assert.equal(
+    authorizeDelegationCreate({
+      actorUserId: A,
+      delegatorUserId: A,
+      actor: authority({ clientRole: DELEGATION_STAFF_ROLE }),
+    }).ok,
+    true
+  );
 });
 
-test("🔴 남의 결재권은 **포털 관리자만** 맡길 수 있다", () => {
+test("🔴 남의 결재권은 **관리자만** 맡길 수 있다 — 역할 ADMIN 또는 포털 깃발", () => {
   const 거절 = authorizeDelegationCreate({
     actorUserId: C,
     delegatorUserId: A,
-    actorIsPortalAdmin: false,
+    actor: authority(),
   });
   assert.equal(거절.ok, false);
   assert.equal(거절.ok === false && 거절.code, "FORBIDDEN");
 
-  const 허용 = authorizeDelegationCreate({
+  // 🔴 STAFF 도 막힌다. 「역할이 있으면 된다」가 아니라 「ADMIN 이어야 한다」다.
+  const staff = authorizeDelegationCreate({
     actorUserId: C,
     delegatorUserId: A,
-    actorIsPortalAdmin: true,
+    actor: authority({ clientRole: DELEGATION_STAFF_ROLE }),
   });
-  assert.equal(허용.ok, true);
+  assert.equal(staff.ok, false);
+
+  const 역할 = authorizeDelegationCreate({
+    actorUserId: C,
+    delegatorUserId: A,
+    actor: authority({ clientRole: DELEGATION_ADMIN_ROLE }),
+  });
+  assert.equal(역할.ok, true);
+
+  // 🔵 깃발만 켜진 사람(역할 없음)도 그대로 된다 — 전에 쓰던 유일한 열쇠라, 이 시험이
+  //    없으면 역할로 갈아타며 포털 관리자가 조용히 막히는 날이 안 걸린다.
+  const 깃발 = authorizeDelegationCreate({
+    actorUserId: C,
+    delegatorUserId: A,
+    actor: authority({ isPortalAdmin: true }),
+  });
+  assert.equal(깃발.ok, true);
 });
 
 // ───────────────────────────────────────────── 누가 되돌릴 수 있나
 
 function revocable(over: {
   actorUserId: string;
-  actorIsPortalAdmin?: boolean;
+  /** 🔵 안 적으면 **역할 없는 보통 사람**이다(위 `authority` 의 기본값). */
+  actor?: Partial<DelegationActorAuthority>;
   revokedAt?: Date | null;
   endsAt?: Date;
 }) {
@@ -223,7 +304,7 @@ function revocable(over: {
       revokedAt: over.revokedAt ?? null,
     },
     actorUserId: over.actorUserId,
-    actorIsPortalAdmin: over.actorIsPortalAdmin ?? false,
+    actor: authority(over.actor),
     now: NOW,
   });
 }
@@ -244,19 +325,33 @@ test("🔴 **맡은 위임은 스스로 되돌릴 수 없다** — 서버가 막
   );
 });
 
-test("🔴 맡은 사람은 **포털 관리자여도** 스스로 되돌릴 수 없다", () => {
-  // 깃발 검사를 먼저 두면 「관리자인 대리인」만 거둘 수 있게 되어, 같은 기능이 사람에
+test("🔴 맡은 사람은 **관리자여도** 스스로 되돌릴 수 없다 — 역할이든 깃발이든", () => {
+  // 등급 검사를 먼저 두면 「관리자인 대리인」만 거둘 수 있게 되어, 같은 기능이 사람에
   // 따라 다르게 도는 가장 설명하기 어려운 모양이 된다.
-  const decision = revocable({ actorUserId: B, actorIsPortalAdmin: true });
-  assert.equal(decision.ok, false);
-  assert.equal(decision.ok === false && decision.code, "DELEGATE_CANNOT_REVOKE");
+  const 깃발 = revocable({ actorUserId: B, actor: { isPortalAdmin: true } });
+  assert.equal(깃발.ok, false);
+  assert.equal(깃발.ok === false && 깃발.code, "DELEGATE_CANNOT_REVOKE");
+
+  // 🔴 역할로 관리자가 된 사람도 같다. 길이 둘이 되었으므로 **둘 다** 막히는지 잰다 —
+  //    한쪽만 재면 새 길이 그 울타리를 비켜 가는 날 조용히 통과한다.
+  const 역할 = revocable({ actorUserId: B, actor: { clientRole: DELEGATION_ADMIN_ROLE } });
+  assert.equal(역할.ok, false);
+  assert.equal(역할.ok === false && 역할.code, "DELEGATE_CANNOT_REVOKE");
 });
 
-test("포털 관리자는 남의 위임을 거둬들일 수 있다", () => {
-  assert.equal(revocable({ actorUserId: C, actorIsPortalAdmin: true }).ok, true);
-  const 거절 = revocable({ actorUserId: C, actorIsPortalAdmin: false });
+test("🔴 관리자는 남의 위임을 거둬들일 수 있다 — 세우는 쪽과 **같은 판정**이다", () => {
+  assert.equal(revocable({ actorUserId: C, actor: { isPortalAdmin: true } }).ok, true);
+  assert.equal(
+    revocable({ actorUserId: C, actor: { clientRole: DELEGATION_ADMIN_ROLE } }).ok,
+    true
+  );
+
+  // 🔴 역할 없음·STAFF 는 못 거둔다. 세울 수 없는 사람이 거둘 수 있으면 안 된다 —
+  //    「세울 수는 있는데 거둘 수는 없는」 쪽도, 그 반대도 설명할 수 없는 모양이다.
+  const 거절 = revocable({ actorUserId: C });
   assert.equal(거절.ok, false);
   assert.equal(거절.ok === false && 거절.code, "FORBIDDEN");
+  assert.equal(revocable({ actorUserId: C, actor: { clientRole: DELEGATION_STAFF_ROLE } }).ok, false);
 });
 
 test("🔴 이미 되돌린 줄은 다시 되돌리지 않는다 — 맡긴 본인이어도", () => {
@@ -283,7 +378,6 @@ test("🔴 끝나는 **그 순간**에는 이미 되돌릴 것이 없다 — 판
 test("🔴 상태를 자격보다 **먼저** 본다 — 끝난 줄에 「권한 없음」이 나오면 안내가 틀린다", () => {
   const decision = revocable({
     actorUserId: C,
-    actorIsPortalAdmin: false,
     endsAt: new Date("2026-11-10T00:00:00.000Z"),
   });
   assert.equal(decision.ok === false && decision.code, "DELEGATION_EXPIRED");

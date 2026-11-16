@@ -208,6 +208,88 @@ export function actingApproverSubjects(
 }
 
 /* ------------------------------------------------------------------ */
+/* 등급 — 「남의 결재권까지 다룰 수 있나」를 가르는 한 곳                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 승인함에서 **관리자**인 사람의 역할 이름(`user_client_grants.role`).
+ *
+ * 🔴 **포털은 역할 글자가 유효한지 검사하지 않는다**(schema/clients.ts: 적힌 값이
+ * 맞는지는 받는 시스템이 제 목록과 대조한다). 그래서 이 글자가 DB 에 부여된 글자와 **한
+ * 글자라도 다르면** 오류 없이 「아무도 관리자가 아님」이 된다 — 그런 어긋남은 신고로만
+ * 드러난다. 등록 명령에 적는 값과 **같아야 한다**:
+ *
+ *   npm run client:register -- --client-id dss-approvals --role ADMIN --role STAFF
+ */
+export const DELEGATION_ADMIN_ROLE = "ADMIN";
+
+/**
+ * 그 밖의 모두가 갖는 등급. 🔴 **제 결재권만** 맡길 수 있다.
+ *
+ * 🔵 글자를 상수로 둔 까닭은 판정에 쓰이기 때문이 **아니다** — 판정은 「ADMIN 인가」
+ * 하나로 끝난다(아래). 이 값이 필요한 자리는 **역할 목록 등록**과 **설명**이고, 둘이
+ * 글자로 흩어지면 관리 화면의 드롭다운에 없는 값이 부여되는 날이 온다.
+ */
+export const DELEGATION_STAFF_ROLE = "STAFF";
+
+/**
+ * 판정이 사람에게서 보는 것 — **역할 하나와 깃발 하나.** 그게 전부다.
+ *
+ * 🔵 사람 이름도 계정 상태도 여기 없다. 상태는 문 ⑤ 가 이미 봤고(`authorizeSiteRequest`),
+ * 이름은 판정에 쓰이지 않는다.
+ */
+export type DelegationActorAuthority = {
+  /**
+   * 🔴 **부른 클라이언트에서** 이 사람이 갖는 역할(`user_client_grants.role`).
+   * 부여 행이 없거나 역할을 안 적었으면 `null` 이고, **그것이 정상이다**(그 칸 주석).
+   */
+  clientRole: string | null;
+  /** 포털 자체의 관리자 깃발(`users.is_portal_admin`). */
+  isPortalAdmin: boolean;
+};
+
+/**
+ * 🔴 **「남의 결재권까지 다룰 수 있나」에 답하는 유일한 함수다.**
+ *
+ * 쓰이는 자리가 넷이다 — 남의 위임 **세우기**(`authorizeDelegationCreate`) · 남의 위임
+ * **거두기**(`checkDelegationRevocable`) · **모두의 위임 보기**
+ * (queries 의 `listAllApprovalDelegations`) · **이메일 내리기**
+ * (delegation-request.ts 의 `candidatesForActor`). 🔴 같은 질문이 네 곳에 네 벌로 적히면
+ * 한 곳만 고치는 날 「목록에는 뜨는데 눌리지 않는」 짝이 생기고, **갈라진 것이 인가면
+ * 증상이 없다.**
+ *
+ * ── 🔴 왜 **부른 클라이언트**의 역할인가 (2026-11-16) ────────────────────
+ * 특정 `client_id` 글자를 코드에 박지 않기 위해서다. 박아 두면 그 이름을 바꾸는 날
+ * **오류 없이 「아무것도 없음」**이 되고, 아무도 신고하지 않는다. 지금 쓰기 둘과
+ * `list scope=all` 은 **승인함에서만** 오므로 부른 클라이언트의 역할이 곧 승인함
+ * 역할이다. 🔴 「승인함 것만 봐야 하는 것 아닌가」로 되돌리지 마라 — 되돌리는 순간
+ * 이름 한 번 바꾸는 일이 인가를 조용히 끄는 일이 된다.
+ *
+ * 🔵 그 대가로 **같은 사람의 같은 요청이 보낸 곳에 따라 다르게 돈다.** 그것이 의도다:
+ * 역할은 애초에 시스템마다 따로 붙는 값이고(`user_client_grants` 는 사람이 아니라
+ * **부여 행**에 역할을 단다), 어느 시스템에서 관리자인 것이 모든 시스템에서 관리자라는
+ * 뜻이 되면 역할 표를 나눠 둔 까닭이 사라진다.
+ *
+ * ── 🔴 역할이 `null` 이면 **STAFF 다. 「아무것도 못 함」이 아니다** ───────
+ * 운영 실측(2026-11-16): 승인함에 접근이 부여된 **8명 전원의 역할이 `null`** 이다. 역할
+ * 없음을 닫힌 쪽으로 읽으면 **배포한 날 여덟 명 전부가 제 결재권조차 못 맡긴다.** A/S 가
+ * 같은 함정을 적어 뒀다 — 새 권한 영역을 만들면 운영 DB 에 그 영역의 행이 한 줄도 없어서
+ * 「배포한 날 아무도 이 화면을 못 쓰는」 일이 실제로 일어난다. 🔵 **STAFF 로 보아도 새는
+ * 것이 없다**: 제 결재권을 맡기는 일은 원래 권한과 무관하게 열려 있다
+ * (`authorizeDelegationCreate`).
+ *
+ * ── 🔵 모르는 역할도 STAFF 다 ───────────────────────────────────────────
+ * 승인함에 엉뚱한 역할 글자가 부여돼 있어도(다른 시스템 목록을 보고 골랐다거나) 이
+ * 함수는 ADMIN 한 글자만 본다. 기본값은 **닫힌 쪽**이다.
+ */
+export function isDelegationAdmin(actor: DelegationActorAuthority): boolean {
+  // 🔴 포털 관리자는 역할과 **무관하게** 통과한다. 포털 자체를 관리하는 사람이고,
+  //    이 깃발로 사람 계정과 접근 부여를 손대는 사람이라 여기서 막아도 막히지 않는다.
+  if (actor.isPortalAdmin) return true;
+  return actor.clientRole === DELEGATION_ADMIN_ROLE;
+}
+
+/* ------------------------------------------------------------------ */
 /* 쓰기 판정 — 지정과 되돌리기                                          */
 /* ------------------------------------------------------------------ */
 
@@ -254,7 +336,7 @@ function deny(code: DelegationFailureCode, message: string): DelegationDecision 
  *
  * 🔴 **본인은 권한과 무관하게 열려 있다.** 좁히면 결재권자가 자기 자리를 못 맡기게
  * 되고, 그러면 자리를 비우는 사람이 **매번 관리자에게 부탁해야** 한다 — 이 기능이
- * 있는 까닭 자체가 사라진다. 남의 결재권을 맡길 때만 포털 관리자인지 본다.
+ * 있는 까닭 자체가 사라진다. 남의 결재권을 맡길 때만 **등급**을 본다.
  *
  * 🔴 **「자기를 대리인으로 세우는 것」은 막지 않는다**(2026-10-26 사용자 결정, 포털도
  * 그대로 따른다). 막을 자리는 `created_by_user_id` 가 남기는 **기록**이지 제약이
@@ -262,22 +344,27 @@ function deny(code: DelegationFailureCode, message: string): DelegationDecision 
  * 🔵 표의 `…_different_users` CHECK 는 **다른 이야기**다. 그쪽은 「A 가 A 를
  * 대신한다」는 뜻 없는 줄을 막는다.
  *
- * ── 🔴 포털의 열쇠는 `users.is_portal_admin` 하나다 ────────────────────
- * A/S 는 `users.shipmentRepresentatives` MANAGE 를 빌려 쓰는데, 그것은 **저쪽 저장소의
- * 권한 표**이고 포털에는 그런 표가 없다. 포털이 가진 것은 이 깃발 하나뿐이고, 그
- * 뜻이 바로 「포털 자체를 관리할 수 있는가」다(users.ts). 🔵 새 권한 영역을 만들지
- * 않는 까닭은 저쪽과 같다 — 새로 만들면 **아무에게도 안 켜진 채로 배포**된다.
+ * ── 🔴 열쇠는 **역할**이다 — 깃발 하나가 아니다 (2026-11-16 바뀜) ──────
+ * 처음에는 `users.is_portal_admin` 하나로 갈랐다. 지금은 **부른 클라이언트에서 가진
+ * 역할이 ADMIN** 이거나 그 깃발이면 된다 — 판정은 `isDelegationAdmin` 한 곳에 있다.
+ * 🔴 **역할이 없는 사람(`null`)은 STAFF 다.** 운영의 승인함 사용자 여덟 명이 모두 그
+ * 상태라, 「역할 없음 = 아무것도 못 함」으로 읽으면 배포한 날 전원이 제 결재권조차 못
+ * 맡긴다. 🔵 그래도 **본인 길이 먼저 열려 있어** 그 여덟 명은 멀쩡히 쓴다.
  */
 export function authorizeDelegationCreate(params: {
   /** 실제로 누른 사람의 포털 `users.id`. */
   actorUserId: string;
   /** 누구의 결재권을 맡기는가. */
   delegatorUserId: string;
-  /** 그 사람이 포털 관리자인가(`users.is_portal_admin`). */
-  actorIsPortalAdmin: boolean;
+  /** 🔴 그 사람의 **등급 재료**. 판정은 `isDelegationAdmin` 하나가 한다. */
+  actor: DelegationActorAuthority;
 }): DelegationDecision {
   if (params.actorUserId === params.delegatorUserId) return { ok: true };
-  if (params.actorIsPortalAdmin) return { ok: true };
+  if (isDelegationAdmin(params.actor)) return { ok: true };
+  // 🔵 **사람에게 보여 줄 글은 바꾸지 않았다.** 이제 길이 둘(역할 ADMIN · 포털 관리자)
+  //    이라 글이 한쪽만 말하지만, 거짓은 아니고(포털 관리자는 여전히 할 수 있다) 화면
+  //    글을 고치는 것은 이 조각이 받은 일이 아니다 — 고칠 때는 승인함의 안내와 함께
+  //    봐야 한다.
   return deny(
     "FORBIDDEN",
     "결재권자 본인 또는 포털 관리자만 결재권 위임을 지정할 수 있습니다."
@@ -314,11 +401,11 @@ export function checkDelegationRevocable(params: {
   >;
   /** 실제로 누른 사람의 포털 `users.id`. */
   actorUserId: string;
-  /** 그 사람이 포털 관리자인가(`users.is_portal_admin`). */
-  actorIsPortalAdmin: boolean;
+  /** 🔴 그 사람의 **등급 재료**. 판정은 `isDelegationAdmin` 하나가 한다. */
+  actor: DelegationActorAuthority;
   now: Date;
 }): DelegationDecision {
-  const { delegation, actorUserId, actorIsPortalAdmin, now } = params;
+  const { delegation, actorUserId, actor, now } = params;
 
   if (delegation.revokedAt !== null) {
     return deny("CONFLICT", "이미 철회된 위임입니다. 최신 정보를 다시 불러와 주세요.");
@@ -334,7 +421,7 @@ export function checkDelegationRevocable(params: {
   if (delegation.delegatorUserId === actorUserId) return { ok: true };
 
   // 🔴 맡은 사람은 **관리자여도** 스스로 거둘 수 없다. 이 줄이 위 문단의 전부다 —
-  //    깃발 검사를 먼저 두면 「관리자인 대리인」만 거둘 수 있게 되어, 같은 기능이
+  //    등급 검사를 먼저 두면 「관리자인 대리인」만 거둘 수 있게 되어, 같은 기능이
   //    사람에 따라 다르게 도는 가장 설명하기 어려운 모양이 된다.
   if (delegation.delegateUserId === actorUserId) {
     return deny(
@@ -343,7 +430,10 @@ export function checkDelegationRevocable(params: {
     );
   }
 
-  if (actorIsPortalAdmin) return { ok: true };
+  // 🔴 역할 ADMIN 이거나 포털 관리자. 판정은 `isDelegationAdmin` 한 곳에 있다 —
+  //    세우는 쪽(`authorizeDelegationCreate`)과 **같은 함수**여야 「세울 수는 있는데
+  //    거둘 수는 없는」 사람이 생기지 않는다.
+  if (isDelegationAdmin(actor)) return { ok: true };
 
   return deny(
     "FORBIDDEN",

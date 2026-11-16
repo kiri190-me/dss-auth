@@ -12,6 +12,7 @@ import {
 } from "@/lib/db/queries/approval-delegations";
 import {
   getActiveClient,
+  getClientRole,
   hasClientAccess,
   verifyClientSecret,
   type ClientRecord,
@@ -33,9 +34,11 @@ import { NO_STORE } from "@/lib/notifications/site-feed";
  * 일 다섯:
  *   · `acting` — 각 시스템의 **서버**가 결재할 때 묻는다. 답은 `{ subs, count }`
  *     이고 🔴 **`subs[0]` 은 언제나 부른 사람 자신**이다
- *   · `list`   — 승인함이 묻는다. `scope=mine`(기본) 또는 `scope=all`(포털 관리자)
+ *   · `list`   — 승인함이 묻는다. `scope=mine`(기본) 또는 `scope=all`(관리자)
+ *     🔴 `mine` 에는 **철회된 줄이 오지 않는다**(2026-11-16 사용자 요청). 만료된 줄은
+ *     그대로 온다 — 까닭과 대가는 `visibleOwnDelegations` 에 적혀 있다
  *   · `candidates` — 승인함의 **고르개**가 묻는다. 대리인으로 세울 수 있는 사람의
- *     `sub`·이름까지만 돌려준다. 🔴 **이메일은 포털 관리자가 물었을 때만** 실리고,
+ *     `sub`·이름까지만 돌려준다. 🔴 **이메일은 관리자가 물었을 때만** 실리고,
  *     실었는지를 답이 **스스로 말한다**(`emailsIncluded`) — 그 칸이 없으면 받는 쪽이
  *     「가려진 null」과 「원래 없는 null」을 가를 수 없다
  *   · `create` — 승인함이 지정한다
@@ -70,19 +73,27 @@ export async function POST(request: Request) {
   let result;
   try {
     result = await handleDelegationRequest<ClientRecord>(request, {
-      // 🔴 판정에 쓰는 함수 넷은 전부 **포털에 이미 있는 것**이고, 앞의 다섯 통로가
+      // 🔴 문 여섯에 쓰는 함수 넷은 전부 **포털에 이미 있는 것**이고, 앞의 다섯 통로가
       // 쓰는 것과 **같은 넷**이다. 하나라도 다른 것을 끼우면 「종은 오는데 위임만 안
       // 먹히는」 사람이 생기고, 그 어긋남은 신고로만 드러난다.
+      // 🔵 아래 `clientRole` 만 이 통로에서 새로 붙는 다섯째다 — 등급을 가르는 일은
+      // 위임에만 있다.
       findActiveClient: getActiveClient,
       verifySecret: verifyClientSecret,
       findUser: getUserById,
       hasAccess: hasClientAccess,
+      // 🔴 **역할은 「부른 클라이언트에서」 읽는다.** 특정 client_id 글자를 여기 박으면
+      // 그 이름을 바꾸는 날 오류 없이 「아무도 관리자가 아님」이 된다(판정 쪽 주석).
+      // 🔵 조회가 받는 것은 **내부 PK**(`client.id`)다 — 부여 행이 가리키는 값이다.
+      clientRole: ({ userId, client }) => getClientRole(userId, client.id),
       actingFor: ({ userId, now }) => resolveActingApproverSubjects(userId, now),
       listForUser: ({ userId }) => listApprovalDelegationsForUser(userId),
-      // 🔴 **인가를 여기서 보지 않는다.** 「모두의 위임」은 조회 자신이 깃발을 묻고
+      // 🔴 **인가를 여기서 보지 않는다.** 「모두의 위임」은 조회 자신이 등급을 묻고
       // 거절한다(queries/approval-delegations.ts) — 라우트가 가리는 데 그치면 이
-      // 조회를 부르는 새 자리가 생기는 날 조용히 다 새어 나간다.
-      listAll: ({ actorUserId, now }) => listAllApprovalDelegations(actorUserId, now),
+      // 조회를 부르는 새 자리가 생기는 날 조용히 다 새어 나간다. 🔵 판정 재료가 되라고
+      // 클라이언트 PK 를 함께 넘긴다.
+      listAll: ({ actorUserId, client, now }) =>
+        listAllApprovalDelegations(actorUserId, client.id, now),
       // 🔴 **여기도 인가를 보지 않는다 — 다만 까닭이 위와 정반대다.** 「모두의 위임」은
       // 조회가 제 손으로 거절하지만, 고르개는 **아무도 거절하지 않는다**(제 결재권을
       // 맡기려면 누구나 골라야 한다). 갈리는 것은 **이메일 한 칸**뿐이고 그 판정은

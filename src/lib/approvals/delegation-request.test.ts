@@ -14,7 +14,13 @@ import {
   type DelegateCandidateList,
   type DelegationDeps,
   type RevokeDelegationCommand,
+  visibleOwnDelegations,
 } from "./delegation-request";
+import {
+  authorizeDelegationCreate,
+  DELEGATION_ADMIN_ROLE,
+  DELEGATION_STAFF_ROLE,
+} from "./delegation";
 import type { ActingApproverSubjects, DelegationWriteResult } from "./delegation";
 
 /**
@@ -83,9 +89,11 @@ type Calls = {
   findActiveClient: string[];
   findUser: string[];
   hasAccess: string[];
+  /** 🔴 **어느 클라이언트로 물었는지까지** 남긴다 — 역할은 그 값에 딸려 있다. */
+  clientRole: { userId: string; client: { clientId: string } }[];
   actingFor: { userId: string; now: Date }[];
   listForUser: { userId: string }[];
-  listAll: { actorUserId: string; now: Date }[];
+  listAll: { actorUserId: string; client: { clientId: string }; now: Date }[];
   /** 🔵 인자가 없는 조회라 **센 횟수**만 남긴다. */
   listCandidates: number;
   create: CreateDelegationCommand[];
@@ -101,6 +109,12 @@ function makeDeps(
      * 켜 두면 **이메일을 가리는 길이 시험에서 한 번도 안 걸린다.**
      */
     user?: { status: string; isPortalAdmin?: boolean } | null;
+    /**
+     * 부른 클라이언트에서의 역할. 🔴 **기본값은 `null`** 이고, 그것이 **운영에 지금 있는
+     * 사람의 모양**이다(2026-11-16 실측: 승인함 접근이 부여된 여덟 명 전원이 `null`).
+     * 기본값을 ADMIN 으로 두면 **막히는 쪽이 한 번도 안 걸린다.**
+     */
+    role?: string | null;
     access?: boolean;
     acting?: ActingApproverSubjects;
     mine?: { given: ApprovalDelegationRow[]; received: ApprovalDelegationRow[] };
@@ -113,6 +127,7 @@ function makeDeps(
     findActiveClient: [],
     findUser: [],
     hasAccess: [],
+    clientRole: [],
     actingFor: [],
     listForUser: [],
     listAll: [],
@@ -141,6 +156,11 @@ function makeDeps(
     async hasAccess(userId) {
       calls.hasAccess.push(userId);
       return over.access ?? true;
+    },
+    async clientRole(params) {
+      calls.clientRole.push(params);
+      // 🔴 `null` 이 기본이다 — 「부여는 받았는데 역할은 안 적힌」 보통 사람.
+      return over.role ?? null;
     },
     now: () => NOW,
     async actingFor(params) {
@@ -312,6 +332,82 @@ test("list 는 기본이 내 것이다 — 내가 맡긴 것과 대신하고 있
   assert.deepEqual(calls.listAll, [], "🔴 남의 줄은 묻지도 않는다");
 });
 
+/**
+ * 🔵 아래 셋이 쓰는 표본. **철회된 줄 하나 · 만료된 줄 하나 · 살아 있는 줄 하나**가
+ * 모두 들어 있어야 「전부 뺐다」와 「철회만 뺐다」를 가를 수 있다.
+ */
+const REVOKED = row({
+  id: "rev-1",
+  revokedAt: new Date("2026-11-15T10:00:00.000Z"),
+  revokedByUserId: ME,
+  revokedByName: "홍길동",
+});
+/** 🔴 기간이 **지났을 뿐** 거둬들인 적은 없는 줄(`NOW` 는 11-16). */
+const EXPIRED = row({
+  id: "exp-1",
+  startsAt: new Date("2026-11-01T00:00:00.000Z"),
+  endsAt: new Date("2026-11-10T00:00:00.000Z"),
+});
+
+test("🔴 scope=mine 에서 **철회된 줄이 빠진다** — 맡긴 쪽도 맡은 쪽도 (2026-11-16 사용자 요청)", async () => {
+  const { deps } = makeDeps({
+    mine: {
+      given: [row(), REVOKED],
+      received: [row({ id: "r1", delegatorUserId: THIRD }), { ...REVOKED, id: "rev-2" }],
+    },
+  });
+  const result = await handleDelegationRequest(post(`sub=${ME}&action=list`), deps);
+
+  const body = result.body as { given: { id: string }[]; received: { id: string }[] };
+  // 🔵 「하나가 남았다」가 아니라 **어느 줄이 남았는지**를 잰다 — 수만 세면 엉뚱한 줄이
+  //    빠져도 통과한다.
+  assert.deepEqual(body.given.map((line) => line.id), ["99999999-9999-4999-8999-999999999999"]);
+  assert.deepEqual(body.received.map((line) => line.id), ["r1"]);
+});
+
+test("🔴 **만료된 줄은 그대로 나온다** — 「끝난 것 전부」를 뺀 것이 아니다", async () => {
+  // 🔴 사용자가 말한 것은 **철회됨 하나**다. 넓혀서 만료까지 빼면 「그 기간에 내가 맡겨
+  //    뒀다」를 되짚을 자리가 통째로 사라지고, **없어졌다는 사실 자체가 안 보여** 아무도
+  //    신고하지 않는다.
+  const { deps } = makeDeps({ mine: { given: [EXPIRED, REVOKED], received: [] } });
+  const result = await handleDelegationRequest(post(`sub=${ME}&action=list`), deps);
+
+  const body = result.body as { given: { id: string; endsAt: string }[] };
+  assert.deepEqual(body.given.map((line) => line.id), ["exp-1"]);
+  assert.equal(body.given[0].endsAt, "2026-11-10T00:00:00.000Z");
+});
+
+test("🔴 거르는 것은 순수 함수 하나다 — 보는 칸은 `revokedAt` 뿐이다", () => {
+  const 남은줄 = visibleOwnDelegations([row(), REVOKED, EXPIRED]);
+  assert.deepEqual(남은줄.map((line) => line.id), [
+    "99999999-9999-4999-8999-999999999999",
+    "exp-1",
+  ]);
+  // 🔵 빈 목록도 빈 목록이다(들어온 것이 없으면 거를 것도 없다).
+  assert.deepEqual(visibleOwnDelegations([]), []);
+  // 🔴 받은 목록을 **고쳐 쓰지 않는다** — 조회가 돌려준 배열을 다른 자리에서 또 쓰는 날
+  //    그쪽에서 줄이 사라진다.
+  const 원본 = [row(), REVOKED];
+  visibleOwnDelegations(원본);
+  assert.equal(원본.length, 2);
+});
+
+test("🔴 scope=all 의 live/finished 는 **그대로다** — 거기서 철회된 줄을 빼면 화면이 빈다", async () => {
+  // 🔵 [끝난 위임 보기]가 그리는 것이 `finished` 이고, 철회된 줄은 거기 있어야 한다.
+  const { deps } = makeDeps({
+    all: {
+      ok: true,
+      view: { live: [row()], finished: [REVOKED, EXPIRED], finishedTruncated: false, finishedLimit: 50 },
+    },
+  });
+  const result = await handleDelegationRequest(post(`sub=${ME}&action=list&scope=all`), deps);
+
+  const body = result.body as { live: { id: string }[]; finished: { id: string; revokedAt: string | null }[] };
+  assert.deepEqual(body.live.map((line) => line.id), ["99999999-9999-4999-8999-999999999999"]);
+  assert.deepEqual(body.finished.map((line) => line.id), ["rev-1", "exp-1"]);
+  assert.equal(body.finished[0].revokedAt, "2026-11-15T10:00:00.000Z");
+});
+
 test("🔴 망으로 나가는 한 줄은 `…Sub` 이름에 **ISO 글자**다", async () => {
   const wire = toWireDelegation(row({ revokedAt: new Date("2026-11-17T00:00:00.000Z"), revokedByUserId: THIRD, revokedByName: "박영희" }));
 
@@ -333,7 +429,8 @@ test("되돌리지 않은 줄의 되돌림 칸 셋은 전부 null 이다", () =>
   assert.equal(wire.revokedByName, null);
 });
 
-test("🔴 scope=all 은 **조회가** 거절한다 — 통로는 깃발을 보지 않는다", async () => {
+test("🔴 scope=all 은 **조회가** 거절한다 — 통로는 등급을 보지 않는다", async () => {
+  // 🔵 부른 사람은 역할도 깃발도 없다(makeDeps 의 기본값). 그래도 **통로는 안 가린다.**
   const { deps, calls } = makeDeps({ all: { ok: false, reason: "FORBIDDEN" } });
   const result = await handleDelegationRequest(post(`sub=${ME}&action=list&scope=all`), deps);
 
@@ -342,7 +439,20 @@ test("🔴 scope=all 은 **조회가** 거절한다 — 통로는 깃발을 보�
   assert.equal(codeOf(result.body), "FORBIDDEN");
   // 🔴 **물어는 봤다.** 통로가 미리 가려 버리면, 이 조회를 부르는 새 자리가 생기는
   //    날 인가가 통째로 빠진다 — 판정은 조회 자신이 해야 한다.
-  assert.deepEqual(calls.listAll, [{ actorUserId: ME, now: NOW }]);
+  assert.deepEqual(calls.listAll, [{ actorUserId: ME, client: CLIENT, now: NOW }]);
+});
+
+test("🔴 scope=all 은 조회에 **부른 클라이언트**를 함께 넘긴다 — 없으면 역할을 읽을 수 없다", async () => {
+  // 🔴 등급의 재료 하나가 「그 클라이언트에서의 역할」이고, 조회가 제 손으로 판정한다.
+  //    이 인자가 빠지면 조회는 깃발 하나로 되돌아가고, 역할 ADMIN 인 사람이 **쓰기는
+  //    되는데 목록은 못 보는** 짝이 생긴다. 그 어긋남은 오류가 아니라 신고로만 드러난다.
+  const { deps, calls } = makeDeps({ role: DELEGATION_ADMIN_ROLE });
+  await handleDelegationRequest(post(`sub=${ME}&action=list&scope=all`), deps);
+
+  assert.equal(calls.listAll.length, 1, "🔵 표본이 비면 아래가 공짜로 통과한다");
+  assert.equal(calls.listAll[0].client.clientId, "dss-approvals");
+  // 🔵 통로는 **역할을 읽지도 않는다** — 읽어서 넘기면 판정이 두 곳에 생긴다.
+  assert.deepEqual(calls.clientRole, []);
 });
 
 test("scope=all 이 통과하면 살아 있는 줄과 끝난 줄을 함께 준다", async () => {
@@ -419,6 +529,77 @@ test("🔴 포털 관리자가 부르면 이메일이 실린다 — 이름이 �
   assert.equal(calls.listCandidates, 1);
 });
 
+test("🔴 역할이 ADMIN 이면 포털 깃발 없이도 이메일이 실린다 — **부른 클라이언트의 역할**이다", async () => {
+  const { deps, calls } = makeDeps({ role: DELEGATION_ADMIN_ROLE, candidates: CANDIDATES });
+  const result = await handleDelegationRequest(post(`sub=${ME}&action=candidates`), deps);
+
+  const body = result.body as { candidates: DelegateCandidate[]; emailsIncluded: boolean };
+  assert.equal(body.candidates.length, 3, "🔵 표본이 비면 아래 단언이 공짜로 통과한다");
+  assert.equal(body.emailsIncluded, true);
+  assert.deepEqual(
+    body.candidates.map((candidate) => candidate.email),
+    ["hong@example.invalid", "kim@example.invalid", null]
+  );
+  // 🔴 역할을 **어느 클라이언트에서** 물었는지까지 본다. 여기에 특정 client_id 를 박아
+  //    두면 그 이름을 바꾸는 날 오류 없이 「아무도 관리자가 아님」이 된다.
+  assert.deepEqual(calls.clientRole, [{ userId: ME, client: CLIENT }]);
+});
+
+test("🔴 역할이 **STAFF 면** 이메일이 전부 null — 「역할이 있으면 된다」가 아니다", async () => {
+  const { deps } = makeDeps({ role: DELEGATION_STAFF_ROLE, candidates: CANDIDATES });
+  const result = await handleDelegationRequest(post(`sub=${ME}&action=candidates`), deps);
+
+  const body = result.body as { candidates: DelegateCandidate[]; emailsIncluded: boolean };
+  assert.equal(body.candidates.length, 3);
+  assert.equal(body.emailsIncluded, false);
+});
+
+test("🔴 역할이 **없어도**(null) 고르개는 그대로 온다 — 운영의 여덟 명이 그 상태다", async () => {
+  // 🔴 이 시험이 이 조각의 핵심 중 하나다. 역할 없음을 「아무것도 못 함」으로 읽으면
+  //    배포한 날 여덟 명 전부가 **제 결재권을 맡길 고르개조차** 못 받는다.
+  const { deps } = makeDeps({ role: null, candidates: CANDIDATES });
+  const result = await handleDelegationRequest(post(`sub=${ME}&action=candidates`), deps);
+
+  assert.equal(result.status, 200);
+  const body = result.body as { candidates: DelegateCandidate[]; emailsIncluded: boolean };
+  assert.equal(body.candidates.length, 3, "🔴 목록이 비면 고를 사람이 없어 기능이 사라진다");
+  assert.deepEqual(
+    body.candidates.map((candidate) => candidate.sub),
+    [ME, OTHER, THIRD]
+  );
+  // 🔵 갈리는 것은 이메일 한 칸뿐이다.
+  assert.equal(body.emailsIncluded, false);
+});
+
+test("🔴 포털 관리자는 역할이 없어도 이메일을 받는다 — 전에 쓰던 유일한 열쇠가 살아 있다", async () => {
+  const { deps } = makeDeps({
+    user: { status: "ACTIVE", isPortalAdmin: true },
+    role: null,
+    candidates: CANDIDATES,
+  });
+  const result = await handleDelegationRequest(post(`sub=${ME}&action=candidates`), deps);
+
+  const body = result.body as { candidates: DelegateCandidate[]; emailsIncluded: boolean };
+  assert.equal(body.candidates.length, 3);
+  assert.equal(body.emailsIncluded, true);
+});
+
+test("🔴 역할이 ADMIN 이어도 **사람 줄이 없으면** 문 ⑤ 에서 끝난다 — 명부를 읽지도 않는다", async () => {
+  const { deps, calls } = makeDeps({
+    user: null,
+    role: DELEGATION_ADMIN_ROLE,
+    candidates: CANDIDATES,
+  });
+  const result = await handleDelegationRequest(post(`sub=${ME}&action=candidates`), deps);
+
+  assert.equal(result.status, 403);
+  assert.equal(calls.listCandidates, 0, "🔴 사내 명부를 읽지도 않는다");
+  // 🔵 **이 시험이 재는 것은 문 ⑤ 다.** 「사람 줄이 없으면 등급을 짓지 않는다」는 쪽은
+  //    여기까지 올 수 없어 핸들러로 못 잰다 — 그 자리는 위의 `candidatesForActor(…, null)`
+  //    순수 시험이 붙들고 있다. 시험 이름에 「역할만으로 열리지 않는다」라고 적으면
+  //    재지도 않은 것을 재는 척하게 된다.
+});
+
 test("🔴 포털 관리자가 **아니면** 이메일이 전부 null — 이름과 sub 는 그대로 온다", async () => {
   // 🔵 깃발을 안 적었다 = 관리자가 아니다(makeDeps 의 기본값).
   const { deps } = makeDeps({ candidates: CANDIDATES });
@@ -453,31 +634,87 @@ test("🔴 이메일이 **원래 없는** 사람은 관리자가 불러도 null 
   assert.equal(body.candidates[0].name, "박영희");
 });
 
-test("🔴 가리는 판정은 순수 함수 하나다 — 깃발이 꺼졌거나 사람을 모르면 안 싣는다", () => {
+test("🔴 가리는 판정은 순수 함수 하나다 — 등급이 아니거나 사람을 모르면 안 싣는다", () => {
   const emails = (list: DelegateCandidateList) =>
     list.candidates.map((candidate) => candidate.email);
 
-  assert.deepEqual(emails(candidatesForActor(CANDIDATES, { isPortalAdmin: true })), [
-    "hong@example.invalid",
-    "kim@example.invalid",
-    null,
-  ]);
-  assert.deepEqual(emails(candidatesForActor(CANDIDATES, { isPortalAdmin: false })), [
-    null,
-    null,
-    null,
-  ]);
+  assert.deepEqual(
+    emails(candidatesForActor(CANDIDATES, { clientRole: null, isPortalAdmin: true })),
+    ["hong@example.invalid", "kim@example.invalid", null]
+  );
+  // 🔴 **역할 ADMIN 만으로도 실린다** — 이메일 판정이 쓰기와 같은 함수를 쓰는지가
+  //    여기서 갈린다. 다른 잣대로 재면 「남의 결재권은 맡길 수 있는데 그 사람을 이름으로
+  //    고를 수 없는」 자리가 생긴다.
+  assert.deepEqual(
+    emails(
+      candidatesForActor(CANDIDATES, {
+        clientRole: DELEGATION_ADMIN_ROLE,
+        isPortalAdmin: false,
+      })
+    ),
+    ["hong@example.invalid", "kim@example.invalid", null]
+  );
+  assert.deepEqual(
+    emails(candidatesForActor(CANDIDATES, { clientRole: null, isPortalAdmin: false })),
+    [null, null, null]
+  );
+  assert.deepEqual(
+    emails(
+      candidatesForActor(CANDIDATES, {
+        clientRole: DELEGATION_STAFF_ROLE,
+        isPortalAdmin: false,
+      })
+    ),
+    [null, null, null]
+  );
   // 🔴 **모르는 사람에게는 닫는다.** 문 ⑤ 가 이미 걸러 실제로는 올 수 없는 값이지만,
   //    기본값이 열린 쪽이면 그 문을 손대는 날 조용히 새어 나간다.
   assert.deepEqual(emails(candidatesForActor(CANDIDATES, null)), [null, null, null]);
   // 🔴 **가린 사실과 깃발이 한 함수에서 함께 나온다.** 따로 지으면 어긋난 날 화면이
   //    틀린 안내를 아주 자신 있게 한다.
-  assert.equal(candidatesForActor(CANDIDATES, { isPortalAdmin: true }).emailsIncluded, true);
-  assert.equal(candidatesForActor(CANDIDATES, { isPortalAdmin: false }).emailsIncluded, false);
+  assert.equal(
+    candidatesForActor(CANDIDATES, { clientRole: null, isPortalAdmin: true }).emailsIncluded,
+    true
+  );
+  assert.equal(
+    candidatesForActor(CANDIDATES, { clientRole: DELEGATION_ADMIN_ROLE, isPortalAdmin: false })
+      .emailsIncluded,
+    true
+  );
+  assert.equal(
+    candidatesForActor(CANDIDATES, { clientRole: null, isPortalAdmin: false }).emailsIncluded,
+    false
+  );
   assert.equal(candidatesForActor(CANDIDATES, null).emailsIncluded, false);
   // 🔵 받은 목록을 **고쳐 쓰지 않는다** — 조회 결과를 캐시에 들고 있는 날 그 캐시가
   //    가려진 채로 남으면, 다음에 관리자가 물어도 이메일이 영영 안 온다.
   assert.equal(CANDIDATES[0].email, "hong@example.invalid");
+});
+
+test("🔴 이메일을 내리는 판정과 **남의 결재권을 맡기는 판정이 같다** — 넷이 한 함수를 본다", () => {
+  // 🔴 같은 질문에 같은 답이 나오는지를 **맞대어** 잰다. 한쪽만 고치는 날 「맡길 수는
+  //    있는데 고르개에서 동명이인을 가를 수 없는」(또는 그 반대의) 짝이 생기고, 그
+  //    어긋남은 오류가 아니라 사람이 포기할 때까지 조용하다.
+  const 사람들 = [
+    { clientRole: null, isPortalAdmin: false }, // 운영의 여덟 명
+    { clientRole: DELEGATION_STAFF_ROLE, isPortalAdmin: false },
+    { clientRole: DELEGATION_ADMIN_ROLE, isPortalAdmin: false },
+    { clientRole: null, isPortalAdmin: true },
+    { clientRole: "AS_ENGINEER", isPortalAdmin: false },
+  ];
+  const 답 = 사람들.map((actor) => ({
+    이메일: candidatesForActor(CANDIDATES, actor).emailsIncluded,
+    남의결재권: authorizeDelegationCreate({ actorUserId: ME, delegatorUserId: THIRD, actor }).ok,
+  }));
+
+  assert.deepEqual(
+    답.map((한줄) => 한줄.이메일),
+    [false, false, true, true, false],
+    "🔵 먼저 **무엇을 재는지**를 못 박는다 — 전부 거짓이면 아래가 공짜로 통과한다"
+  );
+  for (const [자리, 한줄] of 답.entries()) {
+    assert.equal(한줄.이메일, 한줄.남의결재권, `${자리}번째 사람에서 두 판정이 갈렸다`);
+  }
 });
 
 test("🔴 관리자가 불렀는데 **전원의 이메일이 원래 비어** 있어도 깃발은 참이다", async () => {

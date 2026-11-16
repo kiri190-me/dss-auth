@@ -1,11 +1,12 @@
 import "server-only";
 import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { approvalDelegations, users } from "@/lib/db/schema";
+import { approvalDelegations, clients, userClientGrants, users } from "@/lib/db/schema";
 import { appendAuditLog } from "./audit";
 import {
   authorizeDelegationCreate,
   checkDelegationRevocable,
+  type DelegationActorAuthority,
   type DelegationFailureCode,
   type DelegationWriteResult,
 } from "@/lib/approvals/delegation";
@@ -27,10 +28,16 @@ import type {
  * 읽어다 주고, 통과하면 쓰는 것**뿐이다. 규칙을 여기 한 벌 더 적으면 화면·통로와
  * 갈라지고, 갈라진 쪽이 인가면 **증상이 없다.**
  *
- * ── 🔴 인가의 열쇠는 `users.is_portal_admin` 하나다 ──────────────────────
- * A/S 는 `users.shipmentRepresentatives` MANAGE 를 빌려 쓰는데 그것은 **저쪽 저장소의
- * 권한 표**이고, 포털에는 그런 표가 없다. 포털이 가진 것은 이 깃발 하나이고 그 뜻이
- * 바로 「포털 자체를 관리할 수 있는가」다(schema/users.ts).
+ * ── 🔴 인가의 열쇠가 **둘**이다 (2026-11-16 바뀜) ───────────────────────
+ * 전에는 `users.is_portal_admin` 하나였다. 지금은 **보낸 클라이언트에서 그 사람이 갖는
+ * 역할이 `ADMIN`** 이거나 그 깃발이면 남의 결재권을 다룰 수 있다. 판정은 베껴 적지 않고
+ * `isDelegationAdmin` 하나가 한다(lib/approvals/delegation.ts — 왜 「부른 클라이언트」
+ * 기준인지도 거기 적혀 있다).
+ *
+ * 🔴 **역할도 거래 안에서 읽는다.** 통로가 읽어 넘겨 주는 편이 질의 하나 싸지만, 그러면
+ * 이 함수를 **다른 자리에서 부르는 날** 인가의 재료 절반이 바깥에서 들어오게 된다 —
+ * 남의 결재권을 세우는 쓰기라 그 자리는 닫아 둔다. 🔵 같은 까닭으로 조회
+ * (`listAllApprovalDelegations`)도 제 손으로 읽는다.
  *
  * ── 🔴 겹치는 기간을 막지 않는다 ────────────────────────────────────────
  * 표가 겹침을 정상으로 본다(표 머리말: 두 사람이 동시에 자리를 비울 수 있다). 그래서
@@ -99,6 +106,53 @@ function isUsableUser(user: PortalUser | undefined): user is PortalUser {
 }
 
 /**
+ * 거래 핸들. 🔵 drizzle 이 지어 주는 타입이 길고 판마다 달라, **이름으로 끌어다 쓴다** —
+ * 손으로 적어 두면 올리는 날 어긋난다.
+ */
+type DelegationTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * 누른 사람과 그 **등급 재료**를 거래 안에서 읽는다.
+ *
+ * 🔴 **쓰기 둘이 같은 함수를 쓴다.** 한쪽에만 역할을 읽어 두면 「세울 수는 있는데 거둘
+ * 수는 없는」 사람이 생기고, 그 어긋남은 오류가 아니라 **그 사람이 포기할 때까지
+ * 조용하다.**
+ *
+ * 🔴 역할은 사람 줄이 아니라 **부여 행**에 붙으므로(`user_client_grants`) 「어느
+ * 클라이언트에서」가 함께 있어야 읽힌다. 명령이 들고 오는 것은 **공개 `client_id`**
+ * (감사 기록에 남는 그 값)라, 내부 PK 로 가는 길을 `clients` 를 거쳐 한 번 꺾는다.
+ * 🔵 통로를 거쳐 온 값은 문 ④ 가 자격증명으로 확인한 클라이언트의 것이다.
+ *
+ * 🔵 **부여 행이 없으면 역할은 `null`** 이고 그것이 정상이다 — 전 직원 공개 시스템에는
+ * 부여 행 자체가 없다. 널을 「아무것도 못 함」으로 읽지 않는 까닭은
+ * `isDelegationAdmin` 쪽에 적혀 있다.
+ */
+async function readActorWithAuthority(
+  tx: DelegationTx,
+  actorUserId: string,
+  clientId: string
+): Promise<{ user: PortalUser; authority: DelegationActorAuthority }> {
+  const [actor] = await tx
+    .select(USER_FIELDS)
+    .from(users)
+    .where(eq(users.id, actorUserId))
+    .limit(1);
+  if (!isUsableUser(actor)) fail("FORBIDDEN", "사용자 정보를 확인할 수 없습니다.");
+
+  const [grant] = await tx
+    .select({ role: userClientGrants.role })
+    .from(userClientGrants)
+    .innerJoin(clients, eq(clients.id, userClientGrants.clientId))
+    .where(and(eq(userClientGrants.userId, actor.id), eq(clients.clientId, clientId)))
+    .limit(1);
+
+  return {
+    user: actor,
+    authority: { clientRole: grant?.role ?? null, isPortalAdmin: actor.isPortalAdmin },
+  };
+}
+
+/**
  * 위임 한 줄을 세운다.
  *
  * 🔴 인자를 **이름 있는 객체로 받는다.** uuid 셋이 줄줄이 늘어선 모양으로 받으면 둘을
@@ -121,18 +175,17 @@ export async function createApprovalDelegation(
 
   try {
     created = await db.transaction(async (tx) => {
-      const [actor] = await tx
-        .select(USER_FIELDS)
-        .from(users)
-        .where(eq(users.id, command.actorUserId))
-        .limit(1);
-      if (!isUsableUser(actor)) fail("FORBIDDEN", "사용자 정보를 확인할 수 없습니다.");
+      const { user: actor, authority } = await readActorWithAuthority(
+        tx,
+        command.actorUserId,
+        command.clientId
+      );
 
-      // 🔴 「본인이면 언제나, 남의 것이면 포털 관리자만」. 규칙은 순수 함수에 있다.
+      // 🔴 「본인이면 언제나, 남의 것이면 관리자만」. 규칙은 순수 함수에 있다.
       const allowed = authorizeDelegationCreate({
         actorUserId: actor.id,
         delegatorUserId: command.delegatorUserId,
-        actorIsPortalAdmin: actor.isPortalAdmin,
+        actor: authority,
       });
       if (!allowed.ok) fail(allowed.code, allowed.message);
 
@@ -233,12 +286,11 @@ export async function revokeApprovalDelegation(
     revoked = await db.transaction(async (tx) => {
       const now = new Date();
 
-      const [actor] = await tx
-        .select(USER_FIELDS)
-        .from(users)
-        .where(eq(users.id, command.actorUserId))
-        .limit(1);
-      if (!isUsableUser(actor)) fail("FORBIDDEN", "사용자 정보를 확인할 수 없습니다.");
+      const { user: actor, authority } = await readActorWithAuthority(
+        tx,
+        command.actorUserId,
+        command.clientId
+      );
 
       const [delegation] = await tx
         .select({
@@ -258,7 +310,7 @@ export async function revokeApprovalDelegation(
       const decision = checkDelegationRevocable({
         delegation,
         actorUserId: actor.id,
-        actorIsPortalAdmin: actor.isPortalAdmin,
+        actor: authority,
         now,
       });
       if (!decision.ok) fail(decision.code, decision.message);

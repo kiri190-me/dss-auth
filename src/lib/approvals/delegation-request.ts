@@ -6,7 +6,13 @@ import {
   type SiteFeedResponse,
   type SiteRequestDeps,
 } from "@/lib/notifications/site-feed";
-import type { ActingApproverSubjects, DelegationFailureCode, DelegationWriteResult } from "./delegation";
+import { isDelegationAdmin } from "./delegation";
+import type {
+  ActingApproverSubjects,
+  DelegationActorAuthority,
+  DelegationFailureCode,
+  DelegationWriteResult,
+} from "./delegation";
 
 /**
  * ============================================================================
@@ -31,8 +37,12 @@ import type { ActingApproverSubjects, DelegationFailureCode, DelegationWriteResu
  * (`candidatesForActor`). 🔴 그래서 `sub` 가 바뀌면 **답도 자격도 함께 바뀐다** —
  * 사이트가 `sub` 에 아무나 적어 보낼 수 있다는 사실이 여기서는 쓰기까지 닿는다. 막는 것은 앞의 통로들과 같은 문 ⑤·⑥ 이고, 그것을
  * 받아들이는 까닭도 같다(site-feed.ts 맨 위의 ⚠️ 문단). 🔵 여기서 더 좁혀지는 것이
- * 하나 있다: **남의 결재권을 맡기거나 거두는 일은 포털 관리자만** 할 수 있고, 그
- * 판정은 `sub` 가 가리키는 사람의 `users.is_portal_admin` 으로 한다(delegation.ts).
+ * 하나 있다: **남의 결재권을 맡기거나 거두는 일은 관리자만** 할 수 있고, 그 판정은
+ * `sub` 가 가리키는 사람이 **부른 클라이언트에서 갖는 역할**(`ADMIN`)이거나
+ * `users.is_portal_admin` 인가로 한다 — 함수는 `isDelegationAdmin` 하나다
+ * (delegation.ts). 🔴 **역할이 없는 사람은 STAFF 다**(= 제 결재권은 맡길 수 있다).
+ * 운영의 승인함 사용자 여덟이 모두 그 상태라, 닫힌 쪽으로 읽으면 배포한 날 전원이
+ * 막힌다.
  *
  * ── 🔴 다섯 다 POST 다. GET 을 열지 않는다 ───────────────────────────────
  * `acting`·`list`·`candidates` 는 읽기지만 주소에 `sub` 를 실으면 **사람 번호가 접근
@@ -142,6 +152,35 @@ export function toWireDelegation(row: ApprovalDelegationRow): WireDelegation {
   };
 }
 
+/**
+ * 🔴 **`scope=mine` 에 보일 줄만 남긴다 — 철회된 줄을 뺀다.** (2026-11-16 사용자 요청)
+ *
+ * 승인함의 [내가 맡긴 것]·[내가 대신하고 있는 것]에 `철회됨` 딱지가 붙은 줄이 떠서,
+ * 눈으로 보고 **안 보이게 해 달라**고 했다. 거둔 위임은 「끝난 일」이고, 목록의 쓸모는
+ * 「지금 무엇이 걸려 있나」에 있다.
+ *
+ * ── 🔴 **기간이 지난(만료된) 줄은 그대로 둔다** ─────────────────────────
+ * 말한 것은 **철회됨 하나**다. 「끝난 것 전부」로 넓히지 않는다 — 만료된 줄은 「그 기간에
+ * 내가 맡겨 뒀다」는 사실을 사람이 되짚는 자리이고, 그것까지 빼면 목록이 **지금 이 순간의
+ * 사진**이 되어 지난 위임을 확인할 길이 통째로 사라진다. 🔵 넓히는 쪽은 언제든 할 수
+ * 있지만, 넓히고 나면 **없어졌다는 사실 자체가 안 보여** 아무도 신고하지 않는다.
+ *
+ * ── 🔵 알아 둘 대가: 제가 철회한 위임을 **어디서도 못 본다** ─────────────
+ * `scope=mine` 에는 [끝난 위임 보기]가 없다(그 손잡이는 `scope=all` 쪽에만 있다). 그래서
+ * 포털 관리자가 아닌 사람은 자기가 거둔 위임을 다시 볼 자리가 없어진다. 🔴 「내가 철회한
+ * 것이 사라졌다」는 신고가 오면 **답은 여기다** — 고치는 길은 두 가지이고(이 거르기를
+ * 되돌리거나, `mine` 에도 끝난 목록을 더하거나) 둘 다 사람에게 물어야 하는 결정이다.
+ * 🔵 그동안에도 기록은 남아 있다 — 감사 로그에 세운 줄과 거둔 줄이 한 줄씩 있다.
+ *
+ * 🔴 **`scope=all` 은 이 함수를 쓰지 않는다.** 거기는 `live`/`finished` 로 이미 갈려
+ * 있고 [끝난 위임 보기]가 그 `finished` 를 그린다 — 여기서 함께 거르면 그 화면이 빈다.
+ */
+export function visibleOwnDelegations(
+  rows: readonly ApprovalDelegationRow[]
+): ApprovalDelegationRow[] {
+  return rows.filter((row) => row.revokedAt === null);
+}
+
 /** 「모두의 위임」이 돌려주는 것. 🔵 살아 있는 줄에는 상한이 없다(조회 쪽 주석). */
 export type AllDelegationsView = {
   live: ApprovalDelegationRow[];
@@ -217,7 +256,8 @@ export type DelegateCandidateList = {
   /**
    * 🔴 **「이메일이 있다」가 아니다. 「이 답에서 이메일을 가리지 않았다」다.**
    *
-   * 값은 **부른 사람이 포털 관리자인가** 하나로 정해진다. 🔴 **실린 이메일을 세어
+   * 값은 **부른 사람이 관리자인가** 하나로 정해진다(`isDelegationAdmin` — 역할 ADMIN
+   * 또는 포털 관리자). 🔴 **실린 이메일을 세어
    * 정하지 않는다** — 관리자가 물었는데 후보 전원의 이메일 칸이 마침 비어 있는 날
    * (개발 DB 에서 다섯 중 넷이 그랬다) 깃발이 거짓이 되고, 화면은 **있지도 않은 권한
    * 문제를 안내한다.** 이 칸이 말하는 것은 **문이 열렸는가**이지 결과가 아니다.
@@ -244,26 +284,31 @@ export type DelegateCandidateList = {
  * 이 통로가 **마지막 문**이고, 한 번 내보낸 값은 저쪽 서버에 그대로 남는다. 「A/S 는
  * 화면에서 하는데 여기는 왜」로 되돌리지 마라.
  *
- * ── 🔴 왜 포털 관리자만인가 ────────────────────────────────────────────
+ * ── 🔴 왜 관리자만인가 ─────────────────────────────────────────────────
  * 이름이 같은 사람을 갈라야 하는 쪽에는 필요하고(관리자가 **남의** 결재권을 맡길 때),
  * 제 결재권을 맡기는 사람에게는 필요 없다. 🔵 한 번에 **사내 전원의 이메일**이 실려
  * 나가는 목록이라 필요한 쪽에만 연다.
+ *
+ * 🔴 **그 「관리자」는 쓰기와 똑같은 판정이다**(`isDelegationAdmin` — 역할 ADMIN 또는
+ * 포털 관리자). 여기만 다른 잣대로 재면 「남의 결재권은 맡길 수 있는데 그 사람을 이름
+ * 으로 고를 수 없는」 자리가 생긴다 — 동명이인을 가르라고 있는 칸이다.
  *
  * 🔴 **가린 사실도 함께 돌려준다**(`emailsIncluded` — 위 타입). 판정이 한 곳에 모여
  * 있어야 「가렸는가」와 「가렸다고 말했는가」가 갈라지지 않는다. 깃발만 따로 지어 붙이는
  * 자리를 만들면, 그 둘이 어긋난 날 **화면은 틀린 안내를 아주 자신 있게** 한다.
  *
- * @param actor 부른 사람. 🔴 **없으면 안 싣는다** — 모르는 사람에게 여는 쪽으로 기울지
- *   않는다(문 ⑤ 가 이미 걸러 실제로는 올 수 없는 값이지만, 기본값은 닫힌 쪽이다).
+ * @param actor 부른 사람의 **등급 재료**(역할 + 깃발). 🔴 **없으면 안 싣는다** — 모르는
+ *   사람에게 여는 쪽으로 기울지 않는다(문 ⑤ 가 이미 걸러 실제로는 올 수 없는 값이지만,
+ *   기본값은 닫힌 쪽이다).
  */
 export function candidatesForActor(
   candidates: readonly DelegateCandidate[],
-  actor: { isPortalAdmin: boolean } | null
+  actor: DelegationActorAuthority | null
 ): DelegateCandidateList {
   // 🔴 **부른 사람 하나로 정해진다.** 아래에서 실제로 실린 이메일을 세지 않는다
   //    (그 까닭은 `emailsIncluded` 쪽 주석). 그래서 **후보가 한 명도 없어도** 이 값은
   //    부른 사람 기준으로 정해진다 — 빈 목록에 거짓이 따라붙지 않는다.
-  const emailsIncluded = actor?.isPortalAdmin === true;
+  const emailsIncluded = actor !== null && isDelegationAdmin(actor);
   return {
     // 🔴 칸을 하나씩 **다시 적어** 내보낸다. 받은 객체를 펼쳐 쓰면(`...candidate`) 조회가
     //    칸을 하나 더 싣게 되는 날 그 칸이 **아무 말 없이 망으로 따라 나간다** — 이
@@ -283,10 +328,14 @@ export type CreateDelegationCommand = {
   /**
    * 어느 시스템이 보냈나(`clients.client_id`). 감사 기록에 그대로 남는다.
    *
-   * 🔵 **판정에는 한 글자도 쓰이지 않는다.** 쓰면 「누가 물었나」가 답을 가르기
-   * 시작하고, 그때부터 같은 요청이 보낸 곳에 따라 다르게 돈다. 남기는 까닭은 하나다:
-   * 나중에 「이 위임이 어디서 들어왔나」를 물을 자리가 생긴다(지금은 승인함 하나지만
-   * 통로는 자격증명만 맞으면 누구에게나 열려 있다).
+   * 🔴 **2026-11-16 부터 판정에도 쓰인다.** 전에는 「쓰면 같은 요청이 보낸 곳에 따라
+   * 다르게 돈다」는 까닭으로 기록 전용이었다. 지금은 **그렇게 도는 것이 의도**다 —
+   * 「남의 결재권까지 다룰 수 있나」를 **그 클라이언트에서의 역할**로 가르기 때문이고
+   * (delegation.ts 의 `isDelegationAdmin`), 역할은 애초에 시스템마다 따로 붙는 값이다.
+   * 🔵 mutation 이 이 글자로 부여 행을 찾아 역할을 **제 거래 안에서** 읽는다.
+   *
+   * 🔴 그러므로 이 칸에 **아무 글자나 넣어 이 함수를 직접 부르면 안 된다.** 통로를 거쳐
+   * 오는 값은 문 ④ 가 자격증명으로 확인한 클라이언트의 것이다(`authorized.client`).
    */
   clientId: string;
   /** 누구의 결재권인가. 안 보내면 `actorUserId` 자신이다. */
@@ -302,7 +351,7 @@ export type CreateDelegationCommand = {
 export type RevokeDelegationCommand = {
   /** 🔴 **실제로 누른 사람**(= 요청의 `sub`). */
   actorUserId: string;
-  /** 어느 시스템이 보냈나. 🔵 판정에는 쓰이지 않는다(위 `clientId` 주석). */
+  /** 어느 시스템이 보냈나. 🔴 **판정에도 쓰인다**(위 `clientId` 주석 — 역할을 거기서 읽는다). */
   clientId: string;
   delegationId: string;
 };
@@ -311,10 +360,14 @@ export type RevokeDelegationCommand = {
  * 문 ⑤ 가 읽는 사람 줄 — 🔴 **위임 통로는 거기서 한 칸 더 본다.**
  *
  * `SiteRequestDeps` 의 `findUser` 는 「지금 쓸 수 있는 계정인가」(`status`)만 답하면
- * 되지만, 여기서는 **이메일을 내릴지**가 그 사람의 `is_portal_admin` 으로 갈린다
+ * 되지만, 여기서는 **이메일을 내릴지**가 등급으로 갈리고 그 재료 하나가 이 깃발이다
  * (`candidatesForActor`). 🔵 돌려주는 모양을 **좁혀** 받는 것이라 문 여섯은 그대로
  * 지난다 — 라우트가 꽂는 함수는 앞의 통로들과 **같은 `getUserById`** 이고, 그것은
  * 이미 이 깃발을 싣고 있다.
+ *
+ * 🔴 **나머지 재료인 역할은 여기 없다.** 역할은 사람 줄이 아니라 **부여 행**에 붙고
+ * (`user_client_grants.role`), 그래서 「누가」만이 아니라 「어느 클라이언트에서」를
+ * 함께 알아야 읽힌다 — 통로가 아는 그 값은 아래 `clientRole` 로 따로 묻는다.
  */
 export type DelegationActor = { status: string; isPortalAdmin: boolean };
 
@@ -335,6 +388,16 @@ export type DelegationDeps<C extends { clientId: string }> = Omit<
   /** 🔴 **좁혀 받는다**(위 `DelegationActor`). 문 ⑤ 는 그대로 지난다. */
   findUser(userId: string): Promise<DelegationActor | null>;
   /**
+   * 이 사람이 **부른 클라이언트에서** 갖는 역할(`user_client_grants.role`).
+   * 🔴 **`null` 이 정상이다** — 부여 행에 역할을 안 적었거나 역할을 안 쓰는 시스템이다.
+   * 그 값을 「아무것도 못 함」으로 읽지 않는다(delegation.ts 의 `isDelegationAdmin`).
+   *
+   * 🔴 **클라이언트 객체를 통째로 받는다.** 조회가 필요로 하는 것은 `clients.id`(내부
+   * PK)인데 이 층은 공개 `client_id` 밖에 모른다 — 타입에 PK 를 적어 넣으면 문 여섯을
+   * 함께 쓰는 통로 여섯의 제네릭이 전부 좁아진다. 꺼내 쓰는 일은 라우트가 한다.
+   */
+  clientRole(params: { userId: string; client: C }): Promise<string | null>;
+  /**
    * 「지금」. 🔴 **한 요청에 하나만 만든다** — 조회 둘이 각자 만들면 그 사이에 끝난
    * 줄이 양쪽에서 빠지거나 양쪽에 들어간다. 🔵 시험이 시계를 고정할 수 있게 받는다.
    */
@@ -347,11 +410,19 @@ export type DelegationDeps<C extends { clientId: string }> = Omit<
     received: ApprovalDelegationRow[];
   }>;
   /**
-   * 🔴 **모두의 위임.** 권한은 **조회 쪽이 제 손으로** 묻고 거절한다 — 여기서 깃발을
+   * 🔴 **모두의 위임.** 권한은 **조회 쪽이 제 손으로** 묻고 거절한다 — 여기서 등급을
    * 보고 갈라서는 안 된다. 화면이나 통로가 가리는 데 그치면, 이 조회를 부르는 **새
    * 자리**가 생기는 날 조용히 다 새어 나간다(A/S 가 2026-10-26 에 같은 자리에서 겪었다).
+   *
+   * 🔴 **그래서 클라이언트를 함께 넘긴다.** 등급의 재료 하나가 「그 클라이언트에서의
+   * 역할」이라, 안 넘기면 조회가 제 손으로 판정할 재료가 없어 깃발 하나로 되돌아간다 —
+   * 그러면 역할 ADMIN 인 사람이 **쓰기는 되는데 목록은 못 보는** 짝이 생긴다.
    */
-  listAll(params: { actorUserId: string; now: Date }): Promise<AllDelegationsResult>;
+  listAll(params: {
+    actorUserId: string;
+    client: C;
+    now: Date;
+  }): Promise<AllDelegationsResult>;
   /**
    * 대리인으로 세울 수 있는 사람 **전부**.
    *
@@ -482,9 +553,9 @@ export async function handleDelegationRequest<C extends { clientId: string }>(
     case "acting":
       return acting(deps, actorUserId, now);
     case "list":
-      return list(deps, params, actorUserId, now);
+      return list(deps, params, actorUserId, authorized.client, now);
     case "candidates":
-      return candidates(deps, actorUserId);
+      return candidates(deps, actorUserId, authorized.client);
     case "create":
       return create(deps, params, actorUserId, authorized.client.clientId);
     case "revoke":
@@ -529,6 +600,7 @@ async function list<C extends { clientId: string }>(
   deps: DelegationDeps<C>,
   params: URLSearchParams,
   actorUserId: string,
+  client: C,
   now: Date
 ): Promise<SiteFeedResponse> {
   const scope = params.get("scope")?.trim() || "mine";
@@ -537,7 +609,7 @@ async function list<C extends { clientId: string }>(
   }
 
   if (scope === "all") {
-    const result = await deps.listAll({ actorUserId, now });
+    const result = await deps.listAll({ actorUserId, client, now });
     if (!result.ok) {
       // 🔴 거절을 지은 것은 **조회 자신**이다(deps 주석). 여기서는 옮기기만 한다.
       return failure("FORBIDDEN", "모두의 결재권 위임을 볼 수 있는 권한이 없습니다.");
@@ -560,8 +632,12 @@ async function list<C extends { clientId: string }>(
     status: 200,
     body: {
       scope: "mine",
-      given: mine.given.map(toWireDelegation),
-      received: mine.received.map(toWireDelegation),
+      // 🔴 **철회된 줄을 여기서 뺀다**(`visibleOwnDelegations` — 그 함수의 주석에 까닭과
+      //    대가가 적혀 있다). 조회가 SQL 로 걸러 주게 하지 않은 까닭은, 거기서 빼면
+      //    **줄 자체를 다시 꺼낼 길이 없어져** 「내가 철회한 것 보기」를 더하는 날 조회부터
+      //    고쳐야 하기 때문이다. 무엇을 **보여 줄지**는 이 층의 결정이다.
+      given: visibleOwnDelegations(mine.given).map(toWireDelegation),
+      received: visibleOwnDelegations(mine.received).map(toWireDelegation),
     },
     headers: NO_STORE,
   };
@@ -576,7 +652,7 @@ async function list<C extends { clientId: string }>(
  * 까지뿐**이고(`DelegateCandidate`), 갈리는 것은 **이메일 한 칸**이다.
  *
  * 🔴 **부른 사람 자신을 빼지 않는다.** 「누구 기준으로 뺄까」가 하나가 아니기
- * 때문이다 — 포털 관리자는 **남의** 결재권도 맡길 수 있어서 기준이 되는 사람이 부른
+ * 때문이다 — 관리자는 **남의** 결재권도 맡길 수 있어서 기준이 되는 사람이 부른
  * 사람과 다르다. 자기에게 맡기는 줄은 `create` 의 모양 검사와 표의
  * `…_different_users` CHECK 가 이미 막는다.
  *
@@ -585,14 +661,23 @@ async function list<C extends { clientId: string }>(
  */
 async function candidates<C extends { clientId: string }>(
   deps: DelegationDeps<C>,
-  actorUserId: string
+  actorUserId: string,
+  client: C
 ): Promise<SiteFeedResponse> {
   // 🔴 사람 줄을 **여기서 한 번 더 읽는다.** 문 ⑤ 는 「쓸 수 있는 계정인가」만 답하고
   //    읽은 줄을 돌려주지 않는데, 돌려주게 고치면 그 문을 함께 쓰는 **통로 여섯이 모두**
   //    바뀐다. 같은 번호의 기본키 조회 한 번이라 값이 싸고, 아래처럼 목록과 나란히
-  //    던지면 왕복도 한 번이다.
-  const [actor, rows] = await Promise.all([deps.findUser(actorUserId), deps.listCandidates()]);
-  return { status: 200, body: candidatesForActor(rows, actor), headers: NO_STORE };
+  //    던지면 왕복도 한 번이다. 🔵 역할 조회도 같은 묶음에 넣어 왕복을 늘리지 않는다.
+  const [actor, clientRole, rows] = await Promise.all([
+    deps.findUser(actorUserId),
+    deps.clientRole({ userId: actorUserId, client }),
+    deps.listCandidates(),
+  ]);
+  // 🔴 **사람 줄을 못 읽었으면 역할이 무엇이든 닫는다.** 둘을 합쳐 등급을 짓는 자리가
+  //    여기 하나이고, 「역할만 보고 연다」로 적으면 사람 줄 없이도 열리는 길이 생긴다 —
+  //    문 ⑤ 가 이미 걸러 실제로는 올 수 없지만, 기본값은 닫힌 쪽이다.
+  const authority = actor === null ? null : { clientRole, isPortalAdmin: actor.isPortalAdmin };
+  return { status: 200, body: candidatesForActor(rows, authority), headers: NO_STORE };
 }
 
 /**

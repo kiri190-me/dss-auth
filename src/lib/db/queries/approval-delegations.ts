@@ -2,9 +2,10 @@ import "server-only";
 import { and, asc, desc, eq, gt, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db/client";
-import { approvalDelegations, users } from "@/lib/db/schema";
+import { approvalDelegations, userClientGrants, users } from "@/lib/db/schema";
 import {
   actingApproverSubjects,
+  isDelegationAdmin,
   type ActingApproverSubjects,
   type ApprovalDelegationPeriod,
 } from "@/lib/approvals/delegation";
@@ -132,8 +133,15 @@ export async function resolveActingApproverSubjects(
 
 /**
  * 「내가 맡긴 것」과 「내가 대신하고 있는 것」. 둘 다 **되돌린 줄·끝난 줄까지** 돌려준다
- * — 화면이 네 딱지(활성·예정·만료·철회됨)를 그리려면 죽은 줄도 보여야 하고, 상태는
- * 저장되지 않고 읽을 때 계산되기 때문이다.
+ * — 상태는 저장되지 않고 읽을 때 계산되므로, 화면이 딱지(활성·예정·만료)를 그리려면
+ * 죽은 줄도 와야 한다.
+ *
+ * 🔴 **그런데 지금 통로는 철회된 줄을 사람에게 안 보여 준다**(2026-11-16 사용자 요청 —
+ * lib/approvals/delegation-request.ts 의 `visibleOwnDelegations`). 거르는 자리를 **여기가
+ * 아니라 거기**로 둔 까닭은, SQL 에서 빼면 줄을 다시 꺼낼 길이 없어져 「내가 철회한 것
+ * 보기」를 더하는 날 이 조회부터 고쳐야 하기 때문이다. 🔵 그래서 이 함수의 답에는
+ * 철회된 줄이 **그대로 들어 있다** — 부르는 새 자리를 만드는 사람은 그 사실을 알고
+ * 「보여 줄 것인가」를 제 손으로 정해야 한다.
  *
  * 🔵 한 줄이 양쪽에 동시에 들어가는 일은 없다 — 그러려면 맡긴 사람과 대신하는 사람이
  * 같아야 하는데, 표의 `…_different_users` CHECK 가 그런 줄을 못 만들게 한다.
@@ -176,18 +184,29 @@ export async function listApprovalDelegationsForUser(userId: string): Promise<{
 const FINISHED_DELEGATION_LIMIT = 50;
 
 /**
- * **모든 사람의** 결재권 위임. 포털 관리자만 받을 수 있다.
+ * **모든 사람의** 결재권 위임. 관리자만 받을 수 있다.
  *
  * ── 🔴 인가를 **이 함수가** 본다. 통로·화면에 맡기지 않는다 ───────────────
- * 이 파일의 다른 조회들과 달리 여기만 제 손으로 깃발을 읽는다. 까닭은 돌려주는 것이
+ * 이 파일의 다른 조회들과 달리 여기만 제 손으로 등급을 읽는다. 까닭은 돌려주는 것이
  * **남의 줄**이라서다 — 통로가 가리는 데 그치면 이 함수를 부르는 **새 자리**(다음에
  * 생길 화면·스크립트)가 생기는 날 조용히 다 새어 나간다. A/S 가 2026-10-26 에 같은
  * 자리에서 겪었다: 「화면에서 가린다」로 시작한 자리가 늘 그렇게 된다.
  *
- * 🔴 **열쇠는 `users.is_portal_admin` 하나다.** 포털에는 권한 표가 없고, 이 깃발의 뜻이
- * 바로 「포털 자체를 관리할 수 있는가」다(schema/users.ts). 쓰기(mutation)가 남의 위임을
- * 세우거나 거둘 때 보는 것과 **같은 값**이다 — 읽기를 쓰기보다 느슨하게 열지 않는다.
- * 되돌릴 수 없는 사람에게 남의 위임 목록을 보여 줄 까닭이 없다.
+ * ── 🔴 열쇠가 **둘**이다 (2026-11-16 바뀜) ───────────────────────────────
+ * 전에는 `users.is_portal_admin` 하나였다. 지금은 **부른 클라이언트에서의 역할이
+ * `ADMIN`** 이거나 그 깃발이면 된다 — 판정은 베껴 적지 않고 순수 함수
+ * `isDelegationAdmin` 하나에 맡긴다(lib/approvals/delegation.ts). 쓰기(mutation)가 남의
+ * 위임을 세우거나 거둘 때 보는 것과 **같은 함수**다 — 읽기를 쓰기보다 느슨하게도,
+ * 빡빡하게도 열지 않는다. 느슨하면 거둘 수 없는 사람이 남의 목록을 보고, 빡빡하면
+ * **거둘 수는 있는데 무엇이 있는지 못 보는** 사람이 생긴다.
+ *
+ * 🔴 그래서 **클라이언트의 내부 PK**(`clients.id`)를 받는다. 공개 `client_id` 가 아니다
+ * — 부여 행이 가리키는 것이 PK 다. 🔵 라우트가 문 ④ 를 통과한 클라이언트에서 꺼내
+ * 넘긴다.
+ *
+ * 🔴 **역할이 없으면(`null`) 못 본다.** 여기서는 그것이 맞다 — 남의 줄이기 때문이다.
+ * 「역할 없음 = STAFF」는 **제 결재권을 맡기는 길**에만 걸리는 말이고, 그 길은 등급을
+ * 묻지도 않는다(`authorizeDelegationCreate`).
  *
  * 🔴 거절은 **빈 목록이 아니라 `ok: false`** 다(그 타입 쪽 주석).
  *
@@ -198,16 +217,27 @@ const FINISHED_DELEGATION_LIMIT = 50;
  */
 export async function listAllApprovalDelegations(
   actorUserId: string,
+  clientRecordId: string,
   now: Date
 ): Promise<AllDelegationsResult> {
+  // 🔵 한 질의로 깃발과 역할을 함께 읽는다. 🔴 **leftJoin 이다** — 부여 행이 없는 사람
+  //    (전 직원 공개 시스템에서 들어온 사람)도 줄이 돌아와야 「깃발만 켜진 포털 관리자」가
+  //    막히지 않는다. innerJoin 으로 바꾸면 그 사람이 조용히 거절당한다.
   const [actor] = await db
-    .select({ isPortalAdmin: users.isPortalAdmin })
+    .select({ isPortalAdmin: users.isPortalAdmin, clientRole: userClientGrants.role })
     .from(users)
+    .leftJoin(
+      userClientGrants,
+      and(
+        eq(userClientGrants.userId, users.id),
+        eq(userClientGrants.clientId, clientRecordId)
+      )
+    )
     .where(eq(users.id, actorUserId))
     .limit(1);
   // 🔵 없는 사람도 여기서 막힌다 — 통로의 문 ⑤ 가 이미 걸렀지만, 이 함수를 다른
   //    자리에서 부를 날을 위해 **여기서도** 거절한다.
-  if (!actor?.isPortalAdmin) return { ok: false, reason: "FORBIDDEN" };
+  if (!actor || !isDelegationAdmin(actor)) return { ok: false, reason: "FORBIDDEN" };
 
   const isLive = and(
     isNull(approvalDelegations.revokedAt),
@@ -250,7 +280,7 @@ export async function listAllApprovalDelegations(
  *
  * ── 🔴 인가를 보지 않는다. 이 목록은 **누구에게나 내려간다** ─────────────
  * 제 결재권을 맡기려면 「누구에게」를 골라야 하고, 고르개가 없으면 기능 자체가 없는
- * 것과 같다. 그래서 위의 `listAllApprovalDelegations` 와 달리 깃발을 묻지 않는다 —
+ * 것과 같다. 그래서 위의 `listAllApprovalDelegations` 와 달리 등급을 묻지 않는다 —
  * 저쪽은 돌려주는 것이 **남의 줄**이지만 이쪽은 **사내 명부의 이름**이다.
  *
  * ── 🔴 그 대신 싣는 칸이 셋뿐이다 ───────────────────────────────────────
@@ -260,7 +290,7 @@ export async function listAllApprovalDelegations(
  *
  * ── 🔴 이메일은 **여기서 거르지 않는다** ────────────────────────────────
  * 누구에게 내릴지는 **부르는 쪽**이 정한다(lib/approvals/delegation-request.ts 의
- * `candidatesForActor` — 포털 관리자에게만 싣는다). 이 함수는 **인자가 없어** 누가
+ * `candidatesForActor` — 관리자에게만 싣는다. 역할 ADMIN 또는 포털 관리자다). 이 함수는 **인자가 없어** 누가
  * 물었는지 알지도 못한다. 조회가 알아서 가리기 시작하면 「왜 어떤 때는 이메일이
  * 없나」를 설명할 자리가 사라진다.
  *
