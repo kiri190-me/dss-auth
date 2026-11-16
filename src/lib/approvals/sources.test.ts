@@ -5,6 +5,8 @@ import { APPROVAL_MAIL_KINDS } from "./kinds";
 import {
   APPROVAL_SOURCE_CLIENT_IDS,
   APPROVAL_SOURCE_PATH,
+  DELEGATION_PUSH_PATH,
+  planDelegationPush,
   toApprovalSources,
 } from "./sources";
 
@@ -87,4 +89,71 @@ test("🔴 주소를 모르는 시스템은 조용히 빠지지 않고 까닭과
     { clientId: "rf-service-system", reason: "no_launcher_url" },
     { clientId: "dss-inventory", reason: "bad_launcher_url" },
   ]);
+});
+
+/* ------------------------------------------------------------------ */
+/* 써 주러 갈 곳 — 묻는 길과 **다르게** 센다                             */
+/* ------------------------------------------------------------------ */
+
+test("위임을 써 줄 경로도 셋이 같다", () => {
+  assert.equal(DELEGATION_PUSH_PATH, "/api/integration/delegations");
+});
+
+test("🔴 전파는 묻는 길과 **같은 목록**을 쓴다 — 셋 전부에 간다", () => {
+  const { targets, unreachable } = planDelegationPush([
+    tile("rf-service-system", "http://as.test:3000/"),
+    tile("dss-inventory", "http://inv.test:3800/parts"),
+    tile("dss-leave", "http://leave.test:3700/"),
+    // 결재가 없는 시스템. 전파할 것이 없으니 **실패도 아니다.**
+    tile("dss-board", "http://board.test:3400/"),
+  ]);
+
+  assert.deepEqual(unreachable, []);
+  assert.deepEqual(targets, [
+    {
+      clientId: "rf-service-system",
+      name: "rf-service-system",
+      delegationsUrl: "http://as.test:3000/api/integration/delegations",
+    },
+    {
+      clientId: "dss-inventory",
+      name: "dss-inventory",
+      delegationsUrl: "http://inv.test:3800/api/integration/delegations",
+    },
+    {
+      clientId: "dss-leave",
+      name: "dss-leave",
+      delegationsUrl: "http://leave.test:3700/api/integration/delegations",
+    },
+  ]);
+  // 🔴 **셋을 다 세는가**를 한 줄로 못 박는다. 갈래가 늘어 목록이 넷이 되는 날
+  //    이 줄이 깨지고, 그때 전파도 함께 늘어야 한다.
+  assert.equal(targets.length, APPROVAL_SOURCE_CLIENT_IDS.length);
+});
+
+test("🔴 목록에 없는 시스템은 **빠지는 것이 아니라 실패**다 — 거기만 위임이 안 걸린다", () => {
+  // 휴가가 `clients` 에 없거나 꺼져 있다. 묻는 길에서는 「그 사람이 못 들어가는
+  // 시스템」이라 조용히 빠지지만, 전파에서는 드러나야 한다.
+  const { targets, unreachable } = planDelegationPush([
+    tile("rf-service-system", "http://as.test:3000/"),
+    tile("dss-inventory", null),
+  ]);
+
+  assert.deepEqual(
+    targets.map((target) => target.clientId),
+    ["rf-service-system"]
+  );
+  assert.deepEqual(unreachable, [
+    { clientId: "dss-inventory", reason: "no_launcher_url" },
+    { clientId: "dss-leave", reason: "not_registered" },
+  ]);
+});
+
+test("🔴 아무것도 못 읽었으면 셋 다 「갈 수 없음」이다 — 빈 목록이 성공으로 읽히면 안 된다", () => {
+  const { targets, unreachable } = planDelegationPush([]);
+  assert.deepEqual(targets, []);
+  assert.deepEqual(
+    unreachable.map((row) => row.reason),
+    ["not_registered", "not_registered", "not_registered"]
+  );
 });

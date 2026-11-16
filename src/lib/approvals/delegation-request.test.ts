@@ -1051,6 +1051,72 @@ test("🔴 거절 코드와 응답 번호의 짝을 한 자리에 못 박는다"
   assert.equal(statusForFailure("NOT_FOUND"), 404);
   assert.equal(statusForFailure("CONFLICT"), 409);
   assert.equal(statusForFailure("DELEGATION_EXPIRED"), 409);
+  // 🔴 전파 실패는 **503** 이다(2026-11-16). 고쳐서 다시 보낼 것이 없고 그대로 다시
+  //    누르는 것이 맞는 답이라, 4xx 로 적으면 승인함이 「입력을 고치세요」로 읽는다.
+  assert.equal(statusForFailure("PROPAGATION_FAILED"), 503);
+});
+
+test("🔴 전파가 실패하면 503 이고, **어느 시스템이** 안 됐는지가 답에 실린다", async () => {
+  const { deps } = makeDeps({
+    writeResult: {
+      ok: false,
+      code: "PROPAGATION_FAILED",
+      message: "휴가 관리에 결재권 위임을 전달하지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
+      failedSystems: ["dss-leave"],
+    },
+  });
+
+  const created = await handleDelegationRequest(
+    post(`sub=${ME}&action=create&delegateSub=${OTHER}&${PERIOD}`),
+    deps
+  );
+
+  assert.equal(created.status, 503);
+  assert.equal(errorOf(created.body), "temporarily_unavailable");
+  // 🔵 글자는 사람에게 할 말이고, 분기에 쓸 값은 이 둘이다.
+  assert.equal(codeOf(created.body), "PROPAGATION_FAILED");
+  assert.deepEqual(
+    (created.body as { failedSystems?: unknown }).failedSystems,
+    ["dss-leave"]
+  );
+});
+
+test("🔴 철회도 전파가 실패하면 거절이다 — 「거둔 줄 알았는데」를 안 만든다", async () => {
+  const { deps } = makeDeps({
+    writeResult: {
+      ok: false,
+      code: "PROPAGATION_FAILED",
+      message: "A/S 관리에 결재권 위임을 전달하지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
+      failedSystems: ["rf-service-system"],
+    },
+  });
+
+  const revoked = await handleDelegationRequest(
+    post(`sub=${ME}&action=revoke&delegationId=d-1`),
+    deps
+  );
+
+  assert.equal(revoked.status, 503);
+  assert.equal(codeOf(revoked.body), "PROPAGATION_FAILED");
+  assert.deepEqual(
+    (revoked.body as { failedSystems?: unknown }).failedSystems,
+    ["rf-service-system"]
+  );
+});
+
+test("🔵 전파와 상관없는 거절에는 failedSystems 가 **아예 없다**", async () => {
+  const { deps } = makeDeps({
+    writeResult: { ok: false, code: "FORBIDDEN", message: "권한이 없습니다." },
+  });
+
+  const rejected = await handleDelegationRequest(
+    post(`sub=${ME}&action=create&delegateSub=${OTHER}&${PERIOD}`),
+    deps
+  );
+
+  assert.equal(rejected.status, 403);
+  // 🔴 빈 배열이 붙으면 「전파는 해 봤는데 전부 됐다」로 읽힌다.
+  assert.equal(Object.hasOwn(rejected.body as object, "failedSystems"), false);
 });
 
 test("🔴 네 갈래 **전부** 어디에도 남지 않는다", async () => {

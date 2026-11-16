@@ -24,6 +24,14 @@ const AS_PURPOSES = {
   notificationsRead: "dss.notifications.read",
   notificationSettingsRead: "dss.notification-settings.read",
   notificationSettingsWrite: "dss.notification-settings.write",
+  /**
+   * 🔴 결재권 위임 전파(2026-11-16, 설계 B-12). **A/S·재고관리·휴가 셋이 이미 이
+   * 글자를 요구하고 있다** — 세 집의 `PORTAL_TOKEN_PURPOSES.delegationsWrite` 에서
+   * 글자 그대로 옮겼다. 한쪽만 고치면 전파가 세 곳에서 **전부 401** 이 되고, 설계
+   * B-13 대로 전파 실패는 지정 자체의 거절이라 증상은 「아무도 결재권을 맡길 수
+   * 없다」 하나다.
+   */
+  delegationsWrite: "dss.delegations.write",
 } as const;
 
 /** A/S 의 PORTAL_TOKEN_MAX_LIFETIME_SECONDS. */
@@ -105,9 +113,27 @@ test("우리가 구운 토큰이 A/S 의 검증을 그대로 통과한다", asyn
   assert.equal(result.subject, SUBJECT);
 });
 
-test("🔴 purpose 가 통로마다 다르다 — 세 값이 서로 겹치지 않는다", () => {
+test("🔴 purpose 가 통로마다 다르다 — 네 값이 서로 겹치지 않는다", () => {
   const values = Object.values(PORTAL_SERVICE_TOKEN_PURPOSES);
   assert.equal(new Set(values).size, values.length, values.join(","));
+  // 🔴 **셈을 함께 잰다.** 위 `deepEqual` 이 이미 목록을 못 박지만, 이 줄의 이름에
+  //    적힌 숫자가 거짓이 되는 날을 여기서 잡는다 — 통과하는 시험 이름에 틀린 말이
+  //    남으면 다음 사람이 그 말을 믿는다.
+  assert.equal(values.length, 4, values.join(","));
+});
+
+test("🔴 위임 쓰기 토큰으로는 알림을 읽을 수 없다 — 방향이 반대인 쪽도 막힌다", async () => {
+  const writeToken = await bake(PORTAL_SERVICE_TOKEN_PURPOSES.delegationsWrite);
+  assert.deepEqual(
+    await verifyLikeTheOtherSide(writeToken, PORTAL_SERVICE_TOKEN_PURPOSES.notificationsRead),
+    { ok: false, reason: "wrong_purpose" }
+  );
+  // 제 통로에서는 그대로 통과한다 — 막는 것이 쓰임새 하나임을 함께 잰다.
+  const same = await verifyLikeTheOtherSide(
+    writeToken,
+    PORTAL_SERVICE_TOKEN_PURPOSES.delegationsWrite
+  );
+  assert.ok(same.ok, same.ok ? "" : JSON.stringify(same));
 });
 
 test("🔴 알림을 읽으려고 구운 토큰으로 설정을 고칠 수 없다", async () => {

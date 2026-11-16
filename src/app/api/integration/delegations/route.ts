@@ -44,6 +44,15 @@ import { NO_STORE } from "@/lib/notifications/site-feed";
  *   · `create` — 승인함이 지정한다
  *   · `revoke` — 승인함이 되돌린다
  *
+ * ── 🔴 쓰기 둘은 **세 시스템에 먼저 써 준다** (2026-11-16, 설계 B-12·B-13) ──
+ * `create`·`revoke` 는 포털 표 하나로 끝나지 않는다. A/S · 재고관리 · 휴가에 먼저
+ * 전파하고(`POST {시스템}/api/integration/delegations`), **셋이 다 성공했을 때만**
+ * 포털에 적는다. 한 곳이라도 실패하면 **아무 데도 적지 않고 거절**한다 —
+ * 거절은 **503 `PROPAGATION_FAILED`** 이고 몸통에 `failedSystems`(안 된 곳의
+ * `client_id`)가 함께 실린다. 차례와 되돌리기는 lib/approvals/delegation-push.ts 에,
+ * 배선은 lib/approvals/delegation-push-service.ts 에 있다.
+ * 🔵 읽기 셋(`acting`·`list`·`candidates`)은 **하나도 안 바뀌었다.**
+ *
  * 설계는 dss-approvals/DELEGATION_DESIGN.md 에 있고, 이 라우트는 그 **조각 1** 이다.
  * 판정은 전부 lib/approvals/delegation-request.ts 에 있고 여기는 그것을 진짜 함수로
  * 채우는 껍데기다.
@@ -55,6 +64,10 @@ import { NO_STORE } from "@/lib/notifications/site-feed";
  * 없다 — 자격은 `client_secret` 하나다.
  *
  * ── 🔴 못 물었을 때는 「위임 없음」이다 (2026-11-16 결정) ─────────────────
+ * 🔵 **`acting` 한 갈래에 대한 이야기다.** 그 길은 2026-11-16 저녁의 방식 전환(B-12)
+ * 뒤에도 아직 살아 있다 — 각 시스템이 제 표를 읽도록 바꾸는 것은 조각 8 이고, 지금
+ * 걷으면 포털 위임이 아무 데서도 안 듣는다.
+ *
  * 각 시스템은 이 통로에 **3초** 상한을 걸고 묻는다. 넘거나 깨지면 **위임이 없는
  * 것으로 보고 결재를 그대로 진행한다 — 거절하지 않는다.** 본인 번호는 언제나 목록
  * 맨 앞에 있으므로 **본인의 결재는 멀쩡히 돌아가고 대리인만 막힌다.**

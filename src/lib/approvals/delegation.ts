@@ -315,17 +315,41 @@ export type DelegationFailureCode =
   /** 이미 되돌린 줄이다. */
   | "CONFLICT"
   /** 기간이 이미 끝났다 — 되돌릴 것이 남아 있지 않다. */
-  | "DELEGATION_EXPIRED";
+  | "DELEGATION_EXPIRED"
+  /**
+   * 🔴 **각 시스템에 써 주지 못했다 — 그래서 포털에도 안 적었다**(설계 B-13, 2026-11-16).
+   *
+   * 다른 코드들과 성질이 다르다: **사람이 고친다고 풀리지 않고, 다시 눌러 보는 것이
+   * 맞는 답이다.** 그래서 번호도 400·403 이 아니라 **503** 이고(statusForFailure),
+   * 어느 시스템이 안 됐는지를 **응답에 함께 싣는다**(`failedSystems`) — 그것이 「다시
+   * 시도할까, 사람을 부를까」를 가르는 재료다.
+   *
+   * 🔵 지정도 철회도 같은 코드를 쓴다. 「거둔 줄 알았는데 안 거둬진」 쪽이 더 위험하다는
+   * 것이 B-13 의 판단이라, 철회도 전파가 실패하면 **실패로 알린다.**
+   */
+  | "PROPAGATION_FAILED";
 
 /** 판정 하나의 답. 성공에는 할 말이 없다. */
 export type DelegationDecision =
   | { ok: true }
   | { ok: false; code: DelegationFailureCode; message: string };
 
-/** 쓰기 하나의 답. 성공하면 그 줄의 번호가 온다. */
+/**
+ * 쓰기 하나의 답. 성공하면 그 줄의 번호가 온다.
+ *
+ * 🔴 거절에 **칸이 하나 더 붙는다**(`failedSystems`) — 전파가 실패한 시스템들의
+ * `client_id` 다. `PROPAGATION_FAILED` 일 때만 실리고 나머지 코드에는 없다.
+ * 🔵 **없는 것이 정상**이라 선택 칸이다. 글자(`message`)에는 사람이 읽을 이름이 들어
+ * 가지만, 승인함이 분기에 쓸 값은 바뀌지 않는 이름이어야 한다(코드와 같은 까닭).
+ */
 export type DelegationWriteResult =
   | { ok: true; id: string }
-  | { ok: false; code: DelegationFailureCode; message: string };
+  | {
+      ok: false;
+      code: DelegationFailureCode;
+      message: string;
+      failedSystems?: readonly string[];
+    };
 
 function deny(code: DelegationFailureCode, message: string): DelegationDecision {
   return { ok: false, code, message };

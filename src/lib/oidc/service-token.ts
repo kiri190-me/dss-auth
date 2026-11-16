@@ -52,6 +52,23 @@ export const PORTAL_SERVICE_TOKEN_PURPOSES = {
   notificationSettingsRead: "dss.notification-settings.read",
   /** 알림 설정 저장. */
   notificationSettingsWrite: "dss.notification-settings.write",
+  /**
+   * 🔴 **결재권 위임을 각 시스템에 써 주러 갈 때.** 읽기가 아니라 **쓰기**다.
+   *
+   * 2026-11-16 저녁에 방식이 뒤집히면서 생겼다(설계 B-12): 결재할 때마다 각
+   * 시스템이 포털에 **묻던** 것을, 포털이 지정·철회할 때 세 시스템에 **써 주는**
+   * 것으로 바꿨다. 그 요청에 붙는 자격이 이 글자다.
+   *
+   * 🔴 **알림 쓰임새를 돌려쓰지 않는다.** 종을 읽는 토큰은 사람이 화면을 열 때마다
+   * 오가는 가장 흔한 값이라, 그것으로 **남의 결재권을 넘기는 줄**을 쓸 수 있으면
+   * 쓰임새를 나눈 까닭이 통로 하나로 무너진다. 받는 쪽 셋이 이미 이 글자를
+   * 요구하고 있다(A/S·재고관리·휴가의 `PORTAL_TOKEN_PURPOSES.delegationsWrite`).
+   *
+   * 🔴 **그러므로 이 한 줄이 빠지면 전파가 세 곳에서 전부 401 이다.** 그리고 설계
+   * B-13 대로 전파 실패는 **지정 자체의 거절**이라, 증상은 「아무도 결재권을 맡길 수
+   * 없다」 하나로 나온다.
+   */
+  delegationsWrite: "dss.delegations.write",
 } as const;
 
 export type PortalServiceTokenPurpose =

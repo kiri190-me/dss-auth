@@ -44,6 +44,11 @@ import type {
  * 운영의 승인함 사용자 여덟이 모두 그 상태라, 닫힌 쪽으로 읽으면 배포한 날 전원이
  * 막힌다.
  *
+ * ── 🔴 쓰기 둘은 **세 시스템 전파가 성공해야 성립한다** (2026-11-16, 설계 B-13) ──
+ * `create`·`revoke` 가 거절되는 길이 하나 늘었다 — `PROPAGATION_FAILED`(503). 이 층은
+ * **그 거절을 옮기기만** 한다(전파는 mutation 이 한다). 🔴 옮길 때 `failedSystems` 를
+ * 빠뜨리지 마라 — 승인함이 「전부 안 됐나 한 곳만 안 됐나」를 가를 유일한 값이다.
+ *
  * ── 🔴 다섯 다 POST 다. GET 을 열지 않는다 ───────────────────────────────
  * `acting`·`list`·`candidates` 는 읽기지만 주소에 `sub` 를 실으면 **사람 번호가 접근
  * 로그·프록시 로그에 그대로 남는다.** 결재함 통로(approvals/route.ts)와 같은 까닭이고,
@@ -458,6 +463,11 @@ export function statusForFailure(code: DelegationFailureCode): number {
     case "CONFLICT":
     case "DELEGATION_EXPIRED":
       return 409;
+    // 🔴 **503 이다.** 고쳐서 다시 보낼 것이 없고 **그대로 다시 누르는 것이 맞는
+    //    답**이라, 사람의 잘못을 뜻하는 4xx 로 적으면 승인함이 「입력을 고치세요」로
+    //    읽는다. 이 집이 「지금은 안 된다」에 쓰는 번호와 같다(라우트의 catch).
+    case "PROPAGATION_FAILED":
+      return 503;
   }
 }
 
@@ -466,6 +476,9 @@ function errorNameForStatus(status: number): string {
   if (status === 403) return "forbidden";
   if (status === 404) return "not_found";
   if (status === 409) return "conflict";
+  // 🔴 라우트가 DB 가 죽었을 때 쓰는 글자와 **같다** — 승인함에서 보면 둘 다
+  //    「포털 쪽 사정으로 지금은 안 된다」이고, 할 일(잠시 뒤 다시)도 같다.
+  if (status === 503) return "temporarily_unavailable";
   return "invalid_request";
 }
 
@@ -475,8 +488,18 @@ function errorNameForStatus(status: number): string {
  * 🔴 **코드도 함께 싣는다**(`code`). 글자는 사람에게 보여 줄 말이라 언제든 바뀌고,
  * 바뀐 글자로 분기하는 승인함은 바뀐 날 조용히 안 듣는다. 🔵 글자는 **우리 코드가
  * 지은 것**이라 그대로 내보내도 된다 — 저쪽에서 온 글자가 아니다.
+ *
+ * 🔴 **전파가 실패한 시스템 목록도 싣는다**(`failedSystems`, 2026-11-16). 글자에도
+ * 이름이 들어가지만 그것은 **사람에게 보여 줄 말**이고, 승인함이 「전부 안 됐나 한
+ * 곳만 안 됐나」로 갈라 말하려면 바뀌지 않는 값이 필요하다 — `client_id` 다.
+ * 🔵 **그 코드일 때만 붙는다.** 다른 거절에 빈 배열이 붙으면 「전파는 해 봤는데 전부
+ * 됐다」로 읽힌다.
  */
-function failure(code: DelegationFailureCode, message: string): SiteFeedResponse {
+function failure(
+  code: DelegationFailureCode,
+  message: string,
+  failedSystems?: readonly string[]
+): SiteFeedResponse {
   const status = statusForFailure(code);
   const response = reject(
     status,
@@ -484,7 +507,14 @@ function failure(code: DelegationFailureCode, message: string): SiteFeedResponse
     message,
     `delegation_${code.toLowerCase()}`
   );
-  return { ...response, body: { ...(response.body as object), code } };
+  return {
+    ...response,
+    body: {
+      ...(response.body as object),
+      code,
+      ...(failedSystems === undefined ? {} : { failedSystems: [...failedSystems] }),
+    },
+  };
 }
 
 /** 모양이 틀린 요청. 🔵 위와 달리 코드가 없다 — 판정까지 가지도 못한 것이다. */
@@ -746,7 +776,10 @@ async function create<C extends { clientId: string }>(
     endsAt,
     reason,
   });
-  if (!result.ok) return failure(result.code, result.message);
+  // 🔴 전파 실패면 `failedSystems` 가 함께 온다(그 코드일 때만). 여기서 짓지 않고
+  //    **쓰기가 돌려준 것을 그대로** 옮긴다 — 지어 붙이면 「실패했다고 말한 곳」과
+  //    「실제로 실패한 곳」이 갈라진다.
+  if (!result.ok) return failure(result.code, result.message, result.failedSystems);
 
   return { status: 200, body: { id: result.id }, headers: NO_STORE };
 }
@@ -774,7 +807,9 @@ async function revoke<C extends { clientId: string }>(
   }
 
   const result = await deps.revoke({ actorUserId, clientId, delegationId });
-  if (!result.ok) return failure(result.code, result.message);
+  // 🔴 철회도 전파가 실패하면 거절이다(설계 B-13) — 「거둔 줄 알았는데 안 거둬진」
+  //    쪽이 더 위험하다. 어느 시스템이 안 됐는지도 그대로 옮긴다.
+  if (!result.ok) return failure(result.code, result.message, result.failedSystems);
 
   return { status: 200, body: { id: result.id }, headers: NO_STORE };
 }
