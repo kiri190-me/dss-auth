@@ -32,7 +32,8 @@ import type { ActingApproverSubjects, DelegationWriteResult } from "./delegation
  * (`authorizeSiteRequest` — notifications/site-feed.ts)과, 그 위에 얹은 울타리
  * 둘이다:
  *
- *   · 남의 결재권을 맡기거나 거두는 것은 **포털 관리자만**
+ *   · 남의 결재권을 맡기거나 거두는 것은 **관리자만**(역할 ADMIN **또는** 포털 관리자 —
+ *     `isDelegationAdmin`. 🔴 2026-11-16 전에는 포털 깃발 하나였다)
  *   · 🔴 **맡은 위임은 스스로 되돌릴 수 없다**
  *
  * 🔵 문 여섯의 속살(머리말 읽기 · 쿼리의 비밀값 · 실패 한도)은 site-feed.test.ts 가
@@ -1000,7 +1001,9 @@ test("🔴 **맡은 위임을 스스로 되돌리려 하면 403** — 화면이 
     writeResult: {
       ok: false,
       code: "DELEGATE_CANNOT_REVOKE",
-      message: "맡은 결재권은 스스로 되돌릴 수 없습니다. 맡긴 분 또는 포털 관리자에게 요청하세요.",
+      // 🔵 판정 층이 실제로 쓰는 글 그대로다(delegation.ts). 베낀 값이라 저쪽이 고쳐도
+      //    여기는 안 깨지므로, 고치는 날 **함께** 고친다(2026-11-16 「포털 관리자」→「관리자」).
+      message: "맡은 결재권은 스스로 되돌릴 수 없습니다. 맡긴 분 또는 관리자에게 요청하세요.",
     },
   });
   const result = await handleDelegationRequest(
@@ -1012,7 +1015,7 @@ test("🔴 **맡은 위임을 스스로 되돌리려 하면 403** — 화면이 
   assert.equal(errorOf(result.body), "forbidden");
   assert.equal(codeOf(result.body), "DELEGATE_CANNOT_REVOKE");
   // 🔴 「누구에게 말해야 하는가」가 글에 남아 있어야 한다.
-  assert.match(describeOf(result.body), /맡긴 분 또는 포털 관리자/);
+  assert.match(describeOf(result.body), /맡긴 분 또는 관리자/);
 });
 
 test("없는 줄은 404, 이미 철회된 줄은 409", async () => {

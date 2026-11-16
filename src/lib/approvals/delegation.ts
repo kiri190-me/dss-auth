@@ -361,13 +361,15 @@ export function authorizeDelegationCreate(params: {
 }): DelegationDecision {
   if (params.actorUserId === params.delegatorUserId) return { ok: true };
   if (isDelegationAdmin(params.actor)) return { ok: true };
-  // 🔵 **사람에게 보여 줄 글은 바꾸지 않았다.** 이제 길이 둘(역할 ADMIN · 포털 관리자)
-  //    이라 글이 한쪽만 말하지만, 거짓은 아니고(포털 관리자는 여전히 할 수 있다) 화면
-  //    글을 고치는 것은 이 조각이 받은 일이 아니다 — 고칠 때는 승인함의 안내와 함께
-  //    봐야 한다.
+  // 🔴 **「관리자」라고만 적는다 — 「포털 관리자」가 아니다**(2026-11-16 고침).
+  //    길이 둘(역할 ADMIN · 포털 관리자)이 된 뒤로 「포털 관리자만」은 **둘 중 하나만
+  //    가리키는 글**이 됐다. 승인함에서 ADMIN 역할을 받은 사람이 이 글을 보면 「나는
+  //    포털 관리자가 아닌데」로 읽고 엉뚱한 사람에게 문의한다 — 막힌 사람이 **누구에게
+  //    말해야 하는지를 틀리게 아는** 것이 거절 글에서 가장 비싼 결함이다.
+  //    🔵 「관리자」 한 낱말이 두 길을 다 덮는다(판정은 `isDelegationAdmin` 하나다).
   return deny(
     "FORBIDDEN",
-    "결재권자 본인 또는 포털 관리자만 결재권 위임을 지정할 수 있습니다."
+    "결재권자 본인 또는 관리자만 결재권 위임을 지정할 수 있습니다."
   );
 }
 
@@ -378,7 +380,8 @@ export function authorizeDelegationCreate(params: {
  * 화면이 단추를 숨기는 것에 기대지 않는다(A/S 도 같다). 맡은 사람이 스스로 자격을
  * 버리는 길을 두면 **맡긴 사람이 모르는 사이에 그 결재가 다시 멈춘다** — 맡긴 쪽은
  * 「맡겨 뒀다」고 믿고 있으므로 아무도 그 건을 보지 않는다. 대리인이 못 하겠다고 하면
- * 맡긴 사람이나 포털 관리자가 거둔다.
+ * 맡긴 사람이나 관리자가 거둔다(🔵 **포털 관리자만이 아니다** — 역할 ADMIN 도 거둔다.
+ * 아래 `isDelegationAdmin`).
  *
  * 🔴 그 경우만 **코드를 따로 둔다**(`DELEGATE_CANNOT_REVOKE`). 「권한 없음」으로
  * 뭉뚱그리면 화면이 「당신은 이것을 거둘 수 없습니다」밖에 말할 수 없는데, 사람이 알아야
@@ -426,7 +429,10 @@ export function checkDelegationRevocable(params: {
   if (delegation.delegateUserId === actorUserId) {
     return deny(
       "DELEGATE_CANNOT_REVOKE",
-      "맡은 결재권은 스스로 되돌릴 수 없습니다. 맡긴 분 또는 포털 관리자에게 요청하세요."
+      // 🔴 「누구에게 말해야 하는가」가 이 글의 전부다. 그래서 **「포털 관리자」로 좁혀
+      //    적지 않는다**(2026-11-16 고침) — 승인함의 ADMIN 역할도 거둘 수 있는데 그렇게
+      //    적으면 대리인이 포털 관리자만 찾아다닌다.
+      "맡은 결재권은 스스로 되돌릴 수 없습니다. 맡긴 분 또는 관리자에게 요청하세요."
     );
   }
 
@@ -435,8 +441,10 @@ export function checkDelegationRevocable(params: {
   //    거둘 수는 없는」 사람이 생기지 않는다.
   if (isDelegationAdmin(actor)) return { ok: true };
 
+  // 🔵 세우는 쪽과 **같은 낱말**이다 — 「관리자」가 역할 ADMIN 과 포털 관리자를 함께
+  //    덮는다(위 `authorizeDelegationCreate` 의 주석).
   return deny(
     "FORBIDDEN",
-    "결재권자 본인 또는 포털 관리자만 결재권 위임을 철회할 수 있습니다."
+    "결재권자 본인 또는 관리자만 결재권 위임을 철회할 수 있습니다."
   );
 }
