@@ -28,6 +28,8 @@ export const AUDIT_LABELS: Record<AuditAction, string> = {
   CODE_REPLAY_DETECTED: "인가 코드 재사용 탐지",
   EMERGENCY_LOGIN: "비상 계정 로그인",
   KEY_ROTATED: "서명 키 교체",
+  DELEGATION_CREATED: "결재권 위임 지정",
+  DELEGATION_REVOKED: "결재권 위임 철회",
 };
 
 /**
@@ -52,6 +54,12 @@ export const AUDIT_LABELS: Record<AuditAction, string> = {
  *      무효가 된다. 모르고 지나가면 "갑자기 아무도 못 들어온다"가 된다.
  *  CLIENT_SECRET_ROTATED — 시스템 하나가 로그인에 실패하기 시작하는 원인이다.
  *  LOGIN_FAILED        — 한두 건은 오타지만, 몰려 있으면 다른 이야기다.
+ *
+ * 🔵 DELEGATION_CREATED/REVOKED 는 **일부러 여기 없다**(2026-11-16). 빠뜨린 것이
+ * 아니다 — 자리를 비우는 사람이 스스로 적는 평상시 업무이고, 늘려 주는 것은 「남의
+ * 결재를 대신 누를 자격」이지 **시스템 접근 권한이 아니다.** 🔴 다만 눈여겨볼 모양이
+ * 하나 있다: `created_by` 가 `delegator` 와 **다른** 줄(관리자가 남의 결재권을 남에게
+ * 맡긴 것). 그것은 유형이 아니라 값으로만 갈리므로 이 집합으로는 표현되지 않는다.
  */
 const NOTABLE: ReadonlySet<AuditAction> = new Set<AuditAction>([
   "GRANT_ROLE_CHANGED",

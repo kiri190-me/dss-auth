@@ -71,6 +71,13 @@
       "when": 1792768036819,
       "tag": "0009_tidy_rafael_vega",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794789777796,
+      "tag": "0010_giant_victor_mancha",
+      "breakpoints": true
     }
   ]
 }

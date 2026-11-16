@@ -12,3 +12,4 @@ export * from "./notification-kind-purposes";
 export * from "./approval-mail-kinds";
 export * from "./approval-mail-deliveries";
 export * from "./approval-inbox-views";
+export * from "./approval-delegations";
