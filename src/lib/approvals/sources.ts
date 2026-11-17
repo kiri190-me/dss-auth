@@ -53,6 +53,15 @@ export const APPROVAL_SOURCE_CLIENT_IDS: readonly string[] = [
  */
 export const DELEGATION_PUSH_PATH = "/api/integration/delegations";
 
+/**
+ * 「이 사람이 **이 기간에 한** 결재」를 물으러 갈 경로. 🔴 셋이 글자까지 같다
+ * (2026-11-17, 세 집이 함께 맞춘 계약).
+ *
+ * 🔵 위의 `APPROVAL_SOURCE_PATH` 와 **같은 시스템 목록**을 쓴다 — 결재가 있는 곳이
+ * 곧 결재 내역이 쌓이는 곳이다. 목록을 여기 또 적지 않는 까닭은 머리말과 같다.
+ */
+export const APPROVAL_HISTORY_PATH = "/api/integration/approval-history";
+
 /** 물어볼 곳 하나. */
 export type ApprovalSource = {
   /** `clients.client_id`. 🔴 토큰의 aud 가 되는 값이다. */
@@ -87,18 +96,24 @@ function originOf(
 }
 
 /**
- * 권한대로 걸러진 시스템 목록을 「물어볼 곳」으로 옮긴다.
+ * 권한대로 걸러진 타일에서 **물어볼 곳의 뿌리**를 고른다.
+ *
+ * 🔴 **묻는 통로 둘이 나눠 쓴다** — 「결재할 건」(`toApprovalSources`)과 「이 기간에
+ * 한 결재」(`toApprovalHistorySources`). 둘은 **붙이는 경로만** 다르고 고르는 규칙은
+ * 글자까지 같다: 같은 시스템 목록 · 같은 권한 판정 · 주소를 모르면 같은 까닭으로
+ * 빠진다. 베껴 두면 한쪽만 고치는 날 **승인함의 두 탭이 서로 다른 집을 묻게** 되고,
+ * 증상은 「내역에만 그 집이 안 나온다」라 원인을 가리키지 않는다.
  *
  * 입력 타입을 `ClientTile` 로 못 박아 둔 이유는 notifications/sources.ts 와 같다 —
  * 저쪽 조회가 바뀌면 여기서 컴파일이 깨지고, 이 함수는 `clients` 표를 보지
  * 않으므로 **받지 않은 시스템을 만들어 낼 방법 자체가 없다.**
  */
-export function toApprovalSources(tiles: readonly ClientTile[]): {
-  sources: ApprovalSource[];
+function pickApprovalOrigins(tiles: readonly ClientTile[]): {
+  picked: { clientId: string; name: string; origin: string }[];
   skipped: SkippedApprovalSource[];
 } {
   const wanted = new Set(APPROVAL_SOURCE_CLIENT_IDS);
-  const sources: ApprovalSource[] = [];
+  const picked: { clientId: string; name: string; origin: string }[] = [];
   const skipped: SkippedApprovalSource[] = [];
 
   for (const tile of tiles) {
@@ -111,14 +126,58 @@ export function toApprovalSources(tiles: readonly ClientTile[]): {
       continue;
     }
 
-    sources.push({
-      clientId: tile.clientId,
-      name: tile.name,
-      approvalsUrl: `${origin.origin}${APPROVAL_SOURCE_PATH}`,
-    });
+    picked.push({ clientId: tile.clientId, name: tile.name, origin: origin.origin });
   }
 
-  return { sources, skipped };
+  return { picked, skipped };
+}
+
+/** 권한대로 걸러진 시스템 목록을 「결재할 건을 물어볼 곳」으로 옮긴다. */
+export function toApprovalSources(tiles: readonly ClientTile[]): {
+  sources: ApprovalSource[];
+  skipped: SkippedApprovalSource[];
+} {
+  const { picked, skipped } = pickApprovalOrigins(tiles);
+  return {
+    sources: picked.map((row) => ({
+      clientId: row.clientId,
+      name: row.name,
+      approvalsUrl: `${row.origin}${APPROVAL_SOURCE_PATH}`,
+    })),
+    skipped,
+  };
+}
+
+/** 결재 **내역**을 물어볼 곳 하나. */
+export type ApprovalHistorySource = {
+  /** `clients.client_id`. 🔴 토큰의 aud 가 되는 값이다. */
+  clientId: string;
+  /** 사람에게 보이는 이름. 🔴 **줄마다 붙는다** — 각 집은 제 이름을 모른다. */
+  name: string;
+  /** 🔴 기간은 아직 안 붙어 있다. 붙이는 자리는 history-period.ts 한 곳이다. */
+  historyUrl: string;
+};
+
+/**
+ * 권한대로 걸러진 시스템 목록을 「결재 내역을 물어볼 곳」으로 옮긴다.
+ *
+ * 🔴 고르는 규칙은 위와 **한 벌**이다(`pickApprovalOrigins`). 「이 사람이 들어갈 수
+ * 있는 시스템」에만 묻는 것도 그대로다 — 못 들어가는 시스템에 물으면 그 시스템에
+ * 「이 사람이 존재한다」를 알리는 꼴이 된다.
+ */
+export function toApprovalHistorySources(tiles: readonly ClientTile[]): {
+  sources: ApprovalHistorySource[];
+  skipped: SkippedApprovalSource[];
+} {
+  const { picked, skipped } = pickApprovalOrigins(tiles);
+  return {
+    sources: picked.map((row) => ({
+      clientId: row.clientId,
+      name: row.name,
+      historyUrl: `${row.origin}${APPROVAL_HISTORY_PATH}`,
+    })),
+    skipped,
+  };
 }
 
 /* ------------------------------------------------------------------ */

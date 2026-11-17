@@ -3,10 +3,12 @@ import { test } from "node:test";
 import type { ClientTile } from "@/lib/db/queries/clients";
 import { APPROVAL_MAIL_KINDS } from "./kinds";
 import {
+  APPROVAL_HISTORY_PATH,
   APPROVAL_SOURCE_CLIENT_IDS,
   APPROVAL_SOURCE_PATH,
   DELEGATION_PUSH_PATH,
   planDelegationPush,
+  toApprovalHistorySources,
   toApprovalSources,
 } from "./sources";
 
@@ -80,6 +82,60 @@ test("🔴 들어갈 수 없는 시스템은 애초에 목록에 없다 — 이 
 
 test("🔴 주소를 모르는 시스템은 조용히 빠지지 않고 까닭과 함께 돌아온다", () => {
   const { sources, skipped } = toApprovalSources([
+    tile("rf-service-system", null),
+    tile("dss-inventory", "주소아님"),
+  ]);
+
+  assert.deepEqual(sources, []);
+  assert.deepEqual(skipped, [
+    { clientId: "rf-service-system", reason: "no_launcher_url" },
+    { clientId: "dss-inventory", reason: "bad_launcher_url" },
+  ]);
+});
+
+/* ------------------------------------------------------------------ */
+/* 내역을 물으러 갈 곳 — 결재할 건과 **같은 규칙으로** 고른다            */
+/* ------------------------------------------------------------------ */
+
+test("결재 내역 통로도 셋이 같은 경로를 쓴다", () => {
+  assert.equal(APPROVAL_HISTORY_PATH, "/api/integration/approval-history");
+});
+
+test("🔴 내역을 묻는 곳과 결재할 건을 묻는 곳이 **같은 집**이다 — 경로만 다르다", () => {
+  const tiles = [
+    tile("rf-service-system", "http://as.test:3000/"),
+    // 결재 통로가 없는 시스템. 양쪽 모두에서 조용히 빠지는 것이 정상이다.
+    tile("dss-board", "http://board.test:3400/"),
+    tile("dss-leave", "http://leave.test:3700/leave"),
+  ];
+
+  const inbox = toApprovalSources(tiles);
+  const history = toApprovalHistorySources(tiles);
+
+  // 🔴 고르는 규칙이 갈라지면 승인함의 두 탭이 서로 다른 집을 묻게 된다.
+  assert.deepEqual(
+    history.sources.map((source) => source.clientId),
+    inbox.sources.map((source) => source.clientId)
+  );
+  assert.deepEqual(history.skipped, inbox.skipped);
+
+  assert.deepEqual(history.sources, [
+    {
+      clientId: "rf-service-system",
+      name: "rf-service-system",
+      historyUrl: "http://as.test:3000/api/integration/approval-history",
+    },
+    {
+      clientId: "dss-leave",
+      name: "dss-leave",
+      // 🔵 런처 주소의 **origin 만** 쓴다. 뒤에 붙은 경로는 버린다.
+      historyUrl: "http://leave.test:3700/api/integration/approval-history",
+    },
+  ]);
+});
+
+test("🔴 내역 쪽도 주소를 모르는 시스템은 조용히 빠지지 않는다", () => {
+  const { sources, skipped } = toApprovalHistorySources([
     tile("rf-service-system", null),
     tile("dss-inventory", "주소아님"),
   ]);
