@@ -32,6 +32,14 @@ const AS_PURPOSES = {
    * 없다」 하나다.
    */
   delegationsWrite: "dss.delegations.write",
+  /**
+   * 🔴 위임 장부 읽기(2026-11-17, 설계 B-14 · 어긋남 점검). **세 집이 먼저 이 글자를
+   * 요구하도록 올려 두었다** — A/S `623fcc3a` · 재고관리 `9928e3e` · 휴가 `09fe333`
+   * 의 `PORTAL_TOKEN_PURPOSES.delegationsRead` 에서 글자 그대로 옮겼다. 셋이 같은
+   * 글자라, 한쪽만 고치면 점검이 **세 집에서 전부 401** 을 받고 그것은 「못 쟀다」로
+   * 보여 진짜 어긋남과 섞인다.
+   */
+  delegationsRead: "dss.delegations.read",
 } as const;
 
 /** A/S 의 PORTAL_TOKEN_MAX_LIFETIME_SECONDS. */
@@ -113,13 +121,37 @@ test("우리가 구운 토큰이 A/S 의 검증을 그대로 통과한다", asyn
   assert.equal(result.subject, SUBJECT);
 });
 
-test("🔴 purpose 가 통로마다 다르다 — 네 값이 서로 겹치지 않는다", () => {
+test("🔴 purpose 가 통로마다 다르다 — 다섯 값이 서로 겹치지 않는다", () => {
   const values = Object.values(PORTAL_SERVICE_TOKEN_PURPOSES);
   assert.equal(new Set(values).size, values.length, values.join(","));
   // 🔴 **셈을 함께 잰다.** 위 `deepEqual` 이 이미 목록을 못 박지만, 이 줄의 이름에
   //    적힌 숫자가 거짓이 되는 날을 여기서 잡는다 — 통과하는 시험 이름에 틀린 말이
   //    남으면 다음 사람이 그 말을 믿는다.
-  assert.equal(values.length, 4, values.join(","));
+  // 🔵 2026-11-17 에 넷에서 다섯이 됐다(위임 장부 읽기).
+  assert.equal(values.length, 5, values.join(","));
+});
+
+test("🔴 위임 쓰기 토큰으로는 장부를 읽을 수 없고, 읽기 토큰으로는 쓸 수 없다", async () => {
+  // 🔴 이 두 방향이 갈라져 있지 않으면, 사람이 [맡기기]를 누를 때마다 나가는 토큰이
+  //    **회사 전체의 결재 대리 관계**를 여는 열쇠가 된다. 세 집이 이미 갈라 두었다.
+  const writeToken = await bake(PORTAL_SERVICE_TOKEN_PURPOSES.delegationsWrite);
+  assert.deepEqual(
+    await verifyLikeTheOtherSide(writeToken, PORTAL_SERVICE_TOKEN_PURPOSES.delegationsRead),
+    { ok: false, reason: "wrong_purpose" }
+  );
+
+  const readToken = await bake(PORTAL_SERVICE_TOKEN_PURPOSES.delegationsRead);
+  assert.deepEqual(
+    await verifyLikeTheOtherSide(readToken, PORTAL_SERVICE_TOKEN_PURPOSES.delegationsWrite),
+    { ok: false, reason: "wrong_purpose" }
+  );
+
+  // 제 통로에서는 그대로 통과한다 — 막는 것이 쓰임새 하나임을 함께 잰다.
+  const same = await verifyLikeTheOtherSide(
+    readToken,
+    PORTAL_SERVICE_TOKEN_PURPOSES.delegationsRead
+  );
+  assert.ok(same.ok, same.ok ? "" : JSON.stringify(same));
 });
 
 test("🔴 위임 쓰기 토큰으로는 알림을 읽을 수 없다 — 방향이 반대인 쪽도 막힌다", async () => {
