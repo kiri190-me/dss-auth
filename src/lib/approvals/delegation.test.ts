@@ -200,7 +200,9 @@ test("🔴 역할 ADMIN 이면 관리자다 — 포털 깃발 없이도", () => 
   assert.equal(isDelegationAdmin(authority()), false);
 });
 
-test("🔴 역할이 **없으면**(null) 관리자가 아니다 — 그래도 STAFF 이지 「아무것도 못 함」이 아니다", () => {
+test("🔴 역할이 **없으면**(null) 관리자가 아니다 — 그래도 「아무것도 못 함」이 아니다", () => {
+  // 🔴 「역할 없음」을 **STAFF 와 같은 것으로 적지 않는다**(2026-11-18). 둘은 포털 관리자
+  //    깃발 앞에서 갈린다 — STAFF 는 깃발을 물리고 `null` 은 못 물린다(아래 시험).
   assert.equal(isDelegationAdmin(authority({ clientRole: null })), false);
   // 🔴 이 사람이 **제 결재권은 맡길 수 있다**는 것이 이 조각의 핵심이다. 그 길은 아래
   //    `authorizeDelegationCreate` 가 등급을 묻기 **전에** 열려 있다.
@@ -217,10 +219,29 @@ test("🔴 STAFF 도, 모르는 역할도 관리자가 아니다 — 기본값�
   assert.equal(isDelegationAdmin(authority({ clientRole: "admin" })), false, "대소문자도 글자다");
 });
 
-test("🔴 포털 관리자는 역할이 무엇이든 관리자다", () => {
+test("🔴 포털 관리자는 역할을 **모를 때만** 관리자다 — STAFF 로 적혀 있으면 진다(2026-11-18)", () => {
+  // 🔵 역할이 `null` 인 포털 관리자는 그대로 통과한다. 운영의 포털 관리자가 그 모양이라
+  //    (승인함 부여 행의 역할이 전부 `null`), 여기까지 막으면 남이 세워 둔 위임을 **볼
+  //    수도 거둘 수도 없는** 상태가 된다.
   assert.equal(isDelegationAdmin(authority({ isPortalAdmin: true })), true);
   assert.equal(
+    isDelegationAdmin(authority({ clientRole: "AS_ENGINEER", isPortalAdmin: true })),
+    true,
+    "모르는 역할 글자도 「아무도 정한 적 없음」이다 — STAFF 와 같이 보지 않는다"
+  );
+
+  // 🔴 **2026-11-18 사용자 결정으로 뒤집힌 줄이다.** 전에는 이 단언이 `true` 였고, 그래서
+  //    승인함 역할이 STAFF 인 포털 관리자가 남의 결재권을 맡길 수 있었다(그 신고가 이
+  //    조각의 출발점이다). 단언을 눅인 것이 아니라 **기대값이 반대로 바뀐** 것이다 —
+  //    함께 좁아지는 넷은 delegation-admin-role.test.ts 가 한 자리에서 잰다.
+  assert.equal(
     isDelegationAdmin(authority({ clientRole: DELEGATION_STAFF_ROLE, isPortalAdmin: true })),
+    false
+  );
+
+  // 🔴 ADMIN 은 **한 톨도 좁아지지 않는다** — 깃발이 있든 없든.
+  assert.equal(
+    isDelegationAdmin(authority({ clientRole: DELEGATION_ADMIN_ROLE, isPortalAdmin: true })),
     true
   );
 });

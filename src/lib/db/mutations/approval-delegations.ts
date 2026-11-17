@@ -41,7 +41,8 @@ import { delegationPropagatorFor } from "@/lib/approvals/delegation-push-service
  * 전에는 `users.is_portal_admin` 하나였다. 지금은 **보낸 클라이언트에서 그 사람이 갖는
  * 역할이 `ADMIN`** 이거나 그 깃발이면 남의 결재권을 다룰 수 있다. 판정은 베껴 적지 않고
  * `isDelegationAdmin` 하나가 한다(lib/approvals/delegation.ts — 왜 「부른 클라이언트」
- * 기준인지도 거기 적혀 있다).
+ * 기준인지도 거기 적혀 있다). 🔴 **역할이 `STAFF` 로 적혀 있으면 깃발이 진다**
+ * (2026-11-18 사용자 결정) — 그 줄도 같은 함수 안에 있다.
  *
  * 🔴 **역할도 거래 안에서 읽는다.** 통로가 읽어 넘겨 주는 편이 질의 하나 싸지만, 그러면
  * 이 함수를 **다른 자리에서 부르는 날** 인가의 재료 절반이 바깥에서 들어오게 된다 —

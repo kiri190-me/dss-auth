@@ -33,7 +33,8 @@ import type { ActingApproverSubjects, DelegationWriteResult } from "./delegation
  * 둘이다:
  *
  *   · 남의 결재권을 맡기거나 거두는 것은 **관리자만**(역할 ADMIN **또는** 포털 관리자 —
- *     `isDelegationAdmin`. 🔴 2026-11-16 전에는 포털 깃발 하나였다)
+ *     `isDelegationAdmin`. 🔴 2026-11-16 전에는 포털 깃발 하나였고, 🔴 2026-11-18 부터는
+ *     역할이 **STAFF 로 적혀 있으면 그 깃발이 진다**)
  *   · 🔴 **맡은 위임은 스스로 되돌릴 수 없다**
  *
  * 🔵 문 여섯의 속살(머리말 읽기 · 쿼리의 비밀값 · 실패 한도)은 site-feed.test.ts 가
