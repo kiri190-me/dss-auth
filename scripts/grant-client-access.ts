@@ -393,6 +393,9 @@ async function main(): Promise<void> {
         displayName: target.displayName,
         actorUserId: actor.id,
         grantRecordId: existing.id,
+        // 이 갈래는 --revoke 뿐이다. 아래 역할 변경 갈래는 아직 세션을 끊지
+        // 않는다(화면과 갈라져 있는 자리 — grant-revocation.test.ts 의 주석).
+        cause: "ACCESS_REVOKED",
         client: {
           clientId: client.clientId,
           requiresGrant: client.requiresGrant,

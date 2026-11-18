@@ -20,11 +20,17 @@ const AS: RevokedClient = {
 /** 전 직원 공개 시스템. 부여 행을 보지 않고 들여보낸다. */
 const OPEN_TO_ALL: RevokedClient = { ...AS, clientId: "dss-home", requiresGrant: false };
 
+/**
+ * 이 파일은 **회수** 갈래를 지킨다. cause 를 여기에 박아 두어, 역할 변경이
+ * 같은 자리를 쓰기 시작한 뒤에도 아래 단언들이 계속 "회수의 판정"을 재게 한다
+ * (역할 변경 쪽은 role-change-session-cut.test.ts).
+ */
 const TARGET = {
   userId: "11111111-1111-4111-8111-111111111111",
   displayName: "홍길동",
   actorUserId: "99999999-9999-4999-8999-999999999999",
   grantRecordId: "22222222-2222-4222-8222-222222222222",
+  cause: "ACCESS_REVOKED" as const,
 };
 
 type NotifyCall = { userId: string; clientId: string; logoutUri: string };
@@ -48,23 +54,32 @@ function spy(result: boolean | Error = true) {
 // ───── 판정 ─────
 
 test("권한 확인을 하는 시스템이면 세션을 끊는다", () => {
-  assert.equal(decideSessionCut(AS), null);
+  assert.equal(decideSessionCut(AS, "ACCESS_REVOKED"), null);
 });
 
 test("🔴 전 직원 공개 시스템은 끊지 않는다 — 회수해도 그 사람은 계속 들어간다", () => {
-  assert.equal(decideSessionCut(OPEN_TO_ALL), "NO_GRANT_CHECK");
+  assert.equal(decideSessionCut(OPEN_TO_ALL, "ACCESS_REVOKED"), "NO_GRANT_CHECK");
 });
 
 test("비활성 시스템에는 통보하지 않는다 — 포털의 다른 판정과 같은 취급이다", () => {
-  assert.equal(decideSessionCut({ ...AS, isActive: false }), "CLIENT_INACTIVE");
+  assert.equal(
+    decideSessionCut({ ...AS, isActive: false }, "ACCESS_REVOKED"),
+    "CLIENT_INACTIVE"
+  );
 });
 
 test("통보 주소가 없으면 보낼 곳이 없다", () => {
-  assert.equal(decideSessionCut({ ...AS, backchannelLogoutUri: null }), "NO_BACKCHANNEL_URI");
+  assert.equal(
+    decideSessionCut({ ...AS, backchannelLogoutUri: null }, "ACCESS_REVOKED"),
+    "NO_BACKCHANNEL_URI"
+  );
 });
 
 test("전 직원 공개가 통보 주소보다 먼저다 — 주소가 있어도 끊을 이유가 없다", () => {
-  assert.equal(decideSessionCut({ ...OPEN_TO_ALL, isActive: false }), "NO_GRANT_CHECK");
+  assert.equal(
+    decideSessionCut({ ...OPEN_TO_ALL, isActive: false }, "ACCESS_REVOKED"),
+    "NO_GRANT_CHECK"
+  );
 });
 
 // ───── 실제로 끊는가 ─────
@@ -225,26 +240,36 @@ test("통보 주소가 없을 때도 숨기지 않는다", () => {
 // ───── 부르는 자리 ─────
 
 /**
- * 🔴 세션 끊기가 **회수 칸 안에만** 있는지 본다.
+ * 🔴 세션 끊기가 **회수 칸과 역할 변경 칸 안에만** 있는지 본다.
  *
- * 권한을 주거나 역할만 바꾸는 길에 이것이 붙으면, 방금 권한을 받은 사람이나
- * 역할이 바뀐 사람이 일하던 화면에서 튕겨 나간다. 그건 시험으로 잡히지 않는
+ * 2026-11-17 까지는 "회수 칸 안에만"이었다. 역할 변경이 끊지 않아 강등이 새고
+ * 있다는 것이 드러나 한 자리가 늘었는데, 🔴 **「새로 부여」까지 번지면 방금
+ * 권한을 받은 사람이 까닭도 모른 채 튕겨 나간다.** 그건 시험으로 잡히지 않는
  * 종류의 실수라(주는 길은 "성공"으로 끝난다) 부르는 자리 자체를 못 박는다.
  * bookmark-icon.test.ts가 스크립트 본문을 읽어 확인하는 것과 같은 방식이다.
  */
-test("🔴 세션 끊기는 회수 갈래에서만 부른다", () => {
+test("🔴 세션 끊기는 회수와 역할 변경 두 갈래에서만 부른다", () => {
   const source = readFileSync("src/lib/server/actions/admin-access.ts", "utf8");
 
-  const calls = source.split("cutSessionsForRevokedGrant(").length - 1;
-  assert.equal(calls, 1, "회수 말고 다른 곳에서도 세션을 끊고 있다");
+  // index 는 타입상 undefined 일 수 있다. -1 로 접어 두면 아래 자리 단언이
+  // 그대로 걸러 낸다 — 단언을 건너뛰는 길을 만들지 않는다.
+  const calls = [...source.matchAll(/cutSessionsForRevokedGrant\(/g)].map(
+    (match) => match.index ?? -1
+  );
+  assert.equal(calls.length, 2, "세션을 끊는 자리의 수가 둘이 아니다");
 
   const revoke = source.indexOf("// ───── 회수 ─────");
   const roleChange = source.indexOf("// ───── 역할 변경 ─────");
-  const callSite = source.indexOf("cutSessionsForRevokedGrant(");
-  assert.ok(revoke > 0 && roleChange > revoke, "회수/역할 변경 구분 주석이 사라졌다");
+  const grant = source.indexOf("// ───── 새로 부여 ─────");
   assert.ok(
-    callSite > revoke && callSite < roleChange,
-    "세션 끊기가 회수 칸 밖에 있다"
+    revoke > 0 && roleChange > revoke && grant > roleChange,
+    "세 갈래를 가르는 구분 주석이 사라졌다"
+  );
+
+  assert.ok(calls[0] > revoke && calls[0] < roleChange, "회수 갈래가 세션을 끊지 않는다");
+  assert.ok(
+    calls[1] > roleChange && calls[1] < grant,
+    "🔴 세션 끊기가 「새로 부여」 갈래까지 번졌다"
   );
 });
 
@@ -279,6 +304,11 @@ test("🔴 명령줄은 화면과 같은 판정을 쓴다 — 판정을 두 벌�
 });
 
 test("🔴 명령줄이 권한을 줄 때는 끊지 않는다", () => {
+  // ⚠️ 2026-11-17 현재 **화면과 갈라져 있다.** 화면은 역할을 바꾸면 세션을 끊지만
+  // (setClientAccess) 명령줄은 아직 안 끊고, 대신 "다음 로그인부터입니다"라고
+  // 정직하게 찍는다. 거짓말은 아니라 급한 구멍은 아니지만, 두 길이 같은 일을
+  // 한다고 믿는 사람이 있으므로 맞추는 일이 남아 있다. 여기 자리 단언은 **지금
+  // 사실**을 적은 것이지 "그래야 한다"가 아니다.
   const source = readFileSync(GRANT_CLI, "utf8");
 
   const revoke = source.indexOf("if (revoke) {");
@@ -328,7 +358,7 @@ test("🔴 명령줄이 세션을 끊을 수 있는 환경으로 등록돼 있�
 
 test("전 직원 공개 시스템은 명령줄에서도 건너뛴다 — 판정이 하나라서 공짜다", () => {
   // 명령줄에만 따로 예외를 둘 필요가 없다는 것을 값으로 확인한다.
-  assert.equal(decideSessionCut(OPEN_TO_ALL), "NO_GRANT_CHECK");
+  assert.equal(decideSessionCut(OPEN_TO_ALL, "ACCESS_REVOKED"), "NO_GRANT_CHECK");
 });
 
 test("🔴 역할을 쓰지 않는 시스템(dss-po)도 권한을 빼면 세션을 끊는다", async () => {

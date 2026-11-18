@@ -178,8 +178,22 @@ function ClientAccessBlock({
       </div>
       <p className="mt-2 text-xs text-zinc-500">
         여기서 고른 역할이 그 시스템의 권한이 됩니다. 그 시스템에 계정이 없으면
-        <strong className="font-medium"> 첫 로그인에 자동으로 만들어집니다.</strong>{" "}
-        이미 로그인해 있는 사람에게는 다음 로그인부터 반영됩니다.
+        <strong className="font-medium"> 첫 로그인에 자동으로 만들어집니다.</strong>
+      </p>
+      {/*
+        🔴 "다음 로그인부터 반영됩니다"라고 안내하던 자리다. 그 말이 맞던 때에는
+        역할을 내려도 이미 들어가 있는 사람이 옛 권한을 계속 썼고, 관리자는
+        막았다고 믿었다. 이제 역할을 바꾸면 그 시스템의 세션을 끊어 바로
+        반영하므로(setClientAccess), 안내도 그 사실을 말한다.
+
+        못 끊은 경우(그 시스템이 꺼져 있거나 통보 주소가 없을 때)는 여기가 아니라
+        「적용」 뒤에 뜨는 결과 줄이 알려 준다 — 그때만 생기는 일이라 늘 적어 두면
+        오히려 읽히지 않는다.
+      */}
+      <p className="mt-1 text-xs text-zinc-500">
+        <strong className="font-medium">역할을 바꾸면 바로 반영됩니다.</strong>{" "}
+        그 시스템에 열려 있던 세션을 끊어, 그 사람이 다시 로그인하면서 새 역할을
+        받게 합니다. 올리든 내리든 똑같이 끊습니다.
       </p>
       <p className="mt-1 text-xs text-zinc-500">
         예외가 하나 있습니다 — 그 시스템에 <strong className="font-medium">같은

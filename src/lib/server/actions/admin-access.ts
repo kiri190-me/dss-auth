@@ -10,6 +10,7 @@ import {
 import { isMoveDirection, moveOneStep, renumber } from "@/lib/auth/client-order";
 import {
   cutSessionsForRevokedGrant,
+  roleChangeNotice,
   sessionCutNotice,
 } from "@/lib/auth/grant-revocation";
 import { assertPortalAdmin } from "@/lib/auth/portal-admin";
@@ -56,8 +57,12 @@ function field(formData: FormData, key: string): string {
  *
  * ⚠️ 여기서 정한 역할은 받는 시스템의 권한을 그대로 결정한다. A/S 관리
  * 시스템은 로그인할 때마다 이 값으로 자기 users.role을 덮어쓴다. 즉 이
- * 화면에서 SUPER_ADMIN을 고르면 그 사람은 다음 로그인에 A/S 최고관리자가
- * 된다. 포털 관리자만 이 액션을 부를 수 있도록 막는 것이 그래서 중요하다.
+ * 화면에서 SUPER_ADMIN을 고르면 그 사람은 A/S 최고관리자가 된다. 포털
+ * 관리자만 이 액션을 부를 수 있도록 막는 것이 그래서 중요하다.
+ *
+ * 🔴 "로그인할 때마다"가 전부라서, 역할을 바꾼 뒤에는 **그 시스템의 세션을
+ * 끊어 로그인을 다시 일으킨다**(아래 역할 변경 갈래). 끊지 않으면 이미 들어가
+ * 있는 사람에게는 아무 일도 일어나지 않는다.
  */
 export async function setClientAccess(formData: FormData) {
   const actor = await assertPortalAdmin();
@@ -81,7 +86,7 @@ export async function setClientAccess(formData: FormData) {
       clientId: clients.clientId,
       name: clients.name,
       availableRoles: clients.availableRoles,
-      // 아래 회수 갈래가 "그 시스템의 세션을 끊을지"를 판정하는 데 쓴다.
+      // 아래 회수·역할 변경 갈래가 "그 시스템의 세션을 끊을지"를 판정하는 데 쓴다.
       requiresGrant: clients.requiresGrant,
       isActive: clients.isActive,
       backchannelLogoutUri: clients.backchannelLogoutUri,
@@ -148,6 +153,7 @@ export async function setClientAccess(formData: FormData) {
         displayName: target.displayName,
         actorUserId: actor.userId,
         grantRecordId: existing.id,
+        cause: "ACCESS_REVOKED",
         client: {
           clientId: client.clientId,
           requiresGrant: client.requiresGrant,
@@ -168,12 +174,26 @@ export async function setClientAccess(formData: FormData) {
 
   // ───── 역할 변경 ─────
   //
-  // 🔴 여기서는 세션을 끊지 않는다. 접근 권한은 그대로이고 바뀐 것은 역할뿐이라,
-  // 화면도 "다음 로그인부터 반영됩니다"라고 안내한다. 끊으면 역할 하나 고칠
-  // 때마다 그 사람이 일하던 화면에서 튕겨 나간다.
+  // 🔴 **여기서도 그 시스템의 세션을 끊는다**(2026-11-17까지는 끊지 않았다).
   //
-  // ⚠️ 역할을 **낮추는** 것은 급한 일일 수 있다(최고관리자 → 일반). 그때는
-  // 권한을 회수해 세션을 끊고 다시 낮은 역할로 주는 것이 지금의 수단이다.
+  // 안 끊던 때의 까닭은 "접근 권한은 그대로이고 바뀐 것은 역할뿐"이었는데, 그것이
+  // 곧 구멍이었다: 받는 세 시스템(A/S·재고관리·휴가)은 **로그인할 때만** 포털이
+  // 보낸 역할을 자기 users.role 에 받아 적는다. 그래서 관리자를 MEMBER 로 내려도
+  // 그 사람은 **로그인된 채로 옛 권한을 계속 썼고**, 드롭다운을 바꾼 관리자는
+  // 막았다고 믿었다. 강등이 그렇게 새고 있었다.
+  //
+  // 새 통로를 만들지 않는다. 백채널 로그아웃이 이미 아홉 시스템 전부에 등록돼
+  // 있고 받는 쪽도 서 있다. 끊으면 그 사람은 다음 요청에서 재로그인으로 떨어지고,
+  // **재로그인이 최신 역할을 반영한다** — 원래 하던 일이다.
+  //
+  // 🔴 **승격도 강등도 똑같이 끊는다**(사용자 결정, 2026-11-18). 방향으로 가르면
+  // "올릴 때는 안 끊는다"는 규칙이 하나 더 생기고, 그 규칙을 아는 사람만 결과를
+  // 예측할 수 있다. 치르는 대가는 승격된 사람이 로그인 화면을 한 번 더 보는
+  // 것인데, 포털 세션은 살아 있으므로 보통 클릭 한 번이다.
+  //
+  // 🔴 **못 끊어도 역할 변경은 되돌리지 않는다.** 되돌리면 관리자가 "바꿨는데
+  // 안 바뀌었다"를 겪고 다음 로그인조차 옛 역할이 된다. 대신 roleChangeNotice 가
+  // 못 끊었다는 사실을 화면에 그대로 적는다.
 
   if (existing) {
     if (existing.role === nextRole) {
@@ -198,15 +218,47 @@ export async function setClientAccess(formData: FormData) {
       clientId: client.clientId,
     });
 
+    // 🔴 역할을 **저장한 뒤에** 부른다. 순서를 뒤집으면 통보와 저장 사이에 그
+    // 사람이 다시 로그인해 **옛 역할로** 세션을 새로 만든다 — 회수 쪽이 부여 행을
+    // 지운 뒤에 부르는 것과 같은 까닭이다.
+    //
+    // 🔴 끊는 곳은 **그 시스템 하나**다. 역할은 집마다 독립이라, 휴가의 역할을
+    // 바꿨다고 A/S 에서 하던 일까지 끊을 까닭이 없다. 위임 전파(B-13)가 "셋이 다
+    // 성공해야 적는다"로 간 것과 일부러 다르게 간다 — 거기는 세 집이 한 사실을
+    // 나눠 갖지만, 역할은 집마다 제 것이다.
+    const outcome = await cutSessionsForRevokedGrant(
+      {
+        userId: target.id,
+        displayName: target.displayName,
+        actorUserId: actor.userId,
+        grantRecordId: existing.id,
+        cause: "ROLE_CHANGED",
+        client: {
+          clientId: client.clientId,
+          requiresGrant: client.requiresGrant,
+          isActive: client.isActive,
+          backchannelLogoutUri: client.backchannelLogoutUri,
+        },
+      },
+      { notifyLogout: sendLogoutNotice, audit: appendAuditLog }
+    );
+
     done(
-      `${target.displayName}님의 ${client.name} 역할을 ${nextRole ?? "(없음)"}(으)로 바꿨습니다. 다음 로그인부터 반영됩니다.`
+      `${target.displayName}님의 ${client.name} 역할을 ${nextRole ?? "(없음)"}(으)로 바꿨습니다.` +
+        roleChangeNotice(outcome)
     );
   }
 
   // ───── 새로 부여 ─────
   //
-  // 🔴 여기서도 세션을 끊지 않는다. 방금 권한을 받은 사람을 로그아웃시키는
-  // 꼴이 되고, 그 사람은 아무 이유도 모른 채 다시 로그인한다.
+  // 🔴 **여기서는 세션을 끊지 않는다.** 위 역할 변경이 끊기 시작한 뒤에도
+  // 그대로다 — 방금 권한을 받은 사람을 로그아웃시키는 꼴이 되고, 그 사람은
+  // 아무 이유도 모른 채 다시 로그인한다.
+  //
+  // 남는 구멍을 숨기지 않고 적어 둔다: 전 직원 공개 시스템(requiresGrant=false)은
+  // 부여 행 없이도 들어가 있을 수 있어서, 거기에 역할까지 함께 주면 그 역할은
+  // 다음 로그인부터 붙는다. 그래도 **주는** 쪽이라 새는 것이 없다 — 지금 그
+  // 사람이 들고 있는 것은 더 낮은 권한이다.
 
   const [inserted] = await db
     .insert(userClientGrants)
