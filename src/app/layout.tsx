@@ -1,5 +1,23 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+/*
+ * 앱 목록 화면(`/apps`) 머리말 오른쪽 끝에 앉는 **알림 종**(@dss/ui)의 생김새.
+ * 그 조각은 CSS 를 스스로 부르지 않는다 — 그러면 번들러 없이는 부를 수 없게
+ * 되어 그쪽 시험이 깨진다(@dss/ui README 7절). 그래서 쓰는 쪽이 한 번 부른다.
+ *
+ * 🔴 **이 줄을 빠뜨리면 tsc 도 lint 도 조용히 통과하고 화면에서 종의 생김새만
+ * 통째로 빠진다.** 펼친 목록이 뜨는 자리도, 배지도, 색도 전부 이 파일에 있다.
+ * 짝이 되는 경로 별칭은 tsconfig.json 에 있다(거기도 같은 말을 적어 두었다).
+ *
+ * 🔵 메뉴바의 `@dss/ui/styles.css` 와 **다른 파일**이다 — 그 묶음은 조각마다
+ * CSS 한 장이고, 한 장으로 묶으려면 CSS 안에서 @import 를 해야 하는데 그것은
+ * 그쪽 시험이 막는다. 포털은 메뉴바를 쓰지 않으므로 종 것만 부른다.
+ *
+ * 🔵 규칙은 전부 `.dss-bell` 아래에만 있고, 종은 보여 줄 알림이 **있을 때만**
+ * 그려진다(알림이 없으면 그 조각이 스스로 null 이다). 로그인 화면·관리자
+ * 화면에 이 줄이 닿아도 바뀌는 것은 없다.
+ */
+import "@dss/ui/notification-bell.css";
 
 export const metadata: Metadata = {
   title: "DSS 통합 로그인",

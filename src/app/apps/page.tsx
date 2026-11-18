@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
+import { NotificationBell } from "@dss/ui";
 import SignOutButton from "@/components/SignOutButton";
 import { hasNewApprovalsForTile } from "@/lib/approvals/screen-service";
 import { isApprovalsTile } from "@/lib/approvals/tile-dot";
@@ -9,6 +10,10 @@ import { listAccessibleClients } from "@/lib/db/queries/clients";
 import { shouldShowTileDot, type PortalNotificationFeed } from "@/lib/notifications/merge";
 import { getNotificationFeed } from "@/lib/notifications/service";
 import { APP_VERSION } from "@/lib/release-notes";
+import {
+  acknowledgeNotificationAction,
+  dismissNotificationAction,
+} from "@/lib/server/actions/notification-bell";
 import { readSsoSession } from "@/lib/session/sso-session";
 
 export const metadata: Metadata = { title: "시스템 목록 | DSS 통합 로그인" };
@@ -98,6 +103,90 @@ async function NewApprovalBadge({
   );
 }
 
+/**
+ * 머리말 **오른쪽 끝**에 앉는 알림 종(@dss/ui 의 NotificationBell).
+ *
+ * 사용자 요구는 한 줄이었다(2026-11-18): 「포털 화면에도 종 알람이 뜨도록」.
+ * 백엔드는 이미 다 있었다 — `getNotificationFeed` 가 **모든 시스템의 알림**을
+ * 모으고, 어느 시스템에 물을지는 **앱 런처 타일과 같은 판정**으로 이미 좁혀져
+ * 있다(service.ts 의 sourcesFor → listAccessibleClients). 여기서 하는 일은
+ * 그 결과를 **그대로** 넘기는 것뿐이다.
+ *
+ * 🔴 **옮겨 담는 코드가 한 줄도 없다.** 포털이 내주는 한 줄
+ * (`PortalNotificationItem`)과 종이 받는 한 줄(`NotificationBellItem`)은 앞의
+ * 아홉 칸이 **글자까지 같다** — 그 타입이 일부러 이쪽의 거울로 지어졌기
+ * 때문이다(@dss/ui 의 notification-bell/types.ts). 베껴 담는 코드가 생기는
+ * 순간 그 묶음을 만든 까닭이 사라진다.
+ *
+ * ── 🔴 `"use client"` 가 아니다 ──────────────────────────────────────────
+ * 펼치고 접는 일은 `<details>` 라 **브라우저가 스스로** 한다. 그래서 이 조각은
+ * 서버 컴포넌트로 남고, 스크립트가 아직 안 붙은 화면에서도 종을 열어 읽을 수
+ * 있다. 🔴 그 대신 아래 두 함수 자리에 넘길 수 있는 것은 **서버 액션뿐이다**
+ * (평범한 함수는 클라이언트 경계를 건너지 못한다).
+ *
+ * ── 🔴 알림이 없으면 **종 자체가 없다**(@dss/ui 의 기본값) ────────────────
+ * `showWhenEmpty` 를 넘기지 않았다 — 알림이 0건인 사람에게는 머리말에 종이
+ * 아예 안 뜬다. 그래서 `emptyLabel`(「새 알림이 없습니다」 같은 말)도 쓸 자리가
+ * 없다. 고른 까닭 넷:
+ *
+ *  1. 🔴 **빈 종을 세워도 자리가 안 지켜진다.** 이 조각은 `<Suspense>` 뒤에
+ *     있고 그 `fallback` 이 `null` 이라, 첫 그림에는 어차피 종이 없다 — 늦게
+ *     흘러 들어오면서 옆 단추들이 한 번 밀리는 것은 **어느 쪽을 골라도
+ *     똑같다.** 「자리를 지킨다」는 이득이 여기서는 생기지 않는다.
+ *  2. `/apps` 는 **머무는 화면이 아니다.** 타일을 눌러 다른 시스템으로 건너가는
+ *     통과 지점이라, 다른 집들처럼 모든 업무 화면 머리말에 종이 서 있는 것과
+ *     사정이 다르다. 한 번 보고 지나가는 자리에 「눌러도 아무것도 없는 단추」를
+ *     남길 값어치가 없다.
+ *  3. 포털에는 **점이 따로 있다**(아래 UnreadDot). 「지금 밀린 일이 없다」를
+ *     알리는 일은 이미 점의 부재가 하고 있어서, 빈 종은 같은 말을 두 번 한다.
+ *  4. 종을 단 다른 집들 가운데 **빈 종을 세우는 곳은 A/S 하나뿐이다**(실측
+ *     2026-11-18 — `showWhenEmpty` 를 넘기는 곳이 거기 한 군데다). 그쪽은 펼친
+ *     칸 아래에 **브라우저 알림 권한 안내**를 끼워 넣어서 알림이 없어도 그
+ *     자리가 필요하다(그 파일의 그 자리 주석). 포털에는 거기 넣을 것이 없다.
+ *
+ * 🔵 **그래서 「알림이 0건이면 종이 안 보이는 것」이 정상이다.** 눈으로 볼 때
+ *    종이 없다고 고장을 의심하지 않도록 적어 둔다.
+ *
+ * ── 🔴 `colorScheme="system"` 을 넘기는 까닭 ─────────────────────────────
+ * 기본값 `"host"` 는 조상에 `.dark` 나 `[data-theme="dark"]` 가 있을 때만
+ * 어두워지는데, **이 포털에는 그런 표시가 없다.** 여기 다크는 globals.css 의
+ * `@media (prefers-color-scheme: dark)` 와 Tailwind 의 `dark:` 유틸리티로
+ * 도므로 OS 설정을 바로 따른다. 기본값으로 두면 OS 가 어두운 사람의 화면에서
+ * **종만 하얗게** 남는다. 🔵 다크를 새로 더하는 것이 아니라 이미 도는 것에
+ * 맞추는 한 낱말이다.
+ *
+ * ── 🔴 「보이는 알림 지우기」(onDismissAll)는 넘기지 않는다 ───────────────
+ * 안 넘기면 그 단추가 아예 안 그려진다(@dss/ui). 이번 조각의 범위가 아니고,
+ * 넘기려면 지금 그리는 열쇠 목록을 미리 묶은 액션이 하나 더 있어야 한다.
+ * 줄마다 서는 ✕ 와 따로 도는 자리라 나중에 더해도 여기 한 줄이다.
+ */
+async function HeaderBell({ feed }: { feed: Promise<PortalNotificationFeed | null> }) {
+  const resolved = await feed;
+  // 못 물어봤으면 그리지 않는다. 🔵 `getNotificationFeed` 는 던지지 않게
+  // 지어져 있으므로(service.ts) 이 갈래는 부모의 `.catch` 가 세우는 것이다.
+  if (resolved === null) return null;
+
+  return (
+    <NotificationBell
+      // 🔴 **받은 그대로**다. 차례도 개수도 포털이 이미 정해 두었다 — 여기서
+      //    다시 세면 각 시스템의 종과 이 종이 서로 다른 숫자를 말하게 된다
+      //    (@dss/ui 의 count 주석).
+      items={resolved.items}
+      count={resolved.count}
+      colorScheme="system"
+      // 🔴 줄을 누르면 「해소됐다」를 포털에 적는다. 🔵 **눌러도 안 사라지는
+      //    줄이 있다** — 승인용으로 분류된 종류는 기록만 남고 종에 남는다
+      //    (그 액션 머리말).
+      onAcknowledge={acknowledgeNotificationAction}
+      // 🔴 이것을 **넘겼을 때만** 줄마다 ✕ 가 그려진다. 🔵 `canDismiss` 는
+      //    넘기지 않는다 = 모든 줄에 ✕ 가 선다. 포털은 어느 줄이 「처리해야
+      //    사라지는 것」인지 가리지 않는다 — 같은 줄이 다른 시스템의 종에서는
+      //    어차피 지워지므로, 여기서만 막는 것은 헷갈리게 만드는 일이다.
+      onDismiss={dismissNotificationAction}
+    />
+  );
+}
+
 export default async function AppsPage() {
   const session = await readSsoSession();
   if (!session) redirect("/signin");
@@ -158,6 +247,23 @@ export default async function AppsPage() {
             </Link>
           ) : null}
           <SignOutButton />
+          {/*
+            🔴 **줄의 맨 오른쪽 끝**이다. 펼친 목록은 종에 오른쪽 끝을 맞춰
+            왼쪽으로 펼쳐지므로(@dss/ui 의 `.dss-bell__list { right: 0 }`),
+            가운데쯤에 앉으면 폰에서 목록 왼쪽이 화면 밖으로 잘린다. 종을 단
+            다른 집들이 전부 같은 자리에 두고 있다.
+
+            🔴 **래퍼 <div> 로 감싸지 않는다.** 감싸면 알림이 없어 종이
+            그려지지 않을 때도 flex 항목 하나와 gap 16px 이 남는다.
+
+            🔴 **여기서 await 하지 않는다** — 위 feed 와 같은 규율이다. 약속만
+            넘기고 기다리는 일은 `<Suspense>` 안쪽에서 일어난다. 여기서
+            기다리면 각 시스템에 가는 HTTP 왕복(캐시가 비면 1.5초)만큼 포털의
+            **첫 화면 전체**가 늦어진다.
+          */}
+          <Suspense fallback={null}>
+            <HeaderBell feed={feed} />
+          </Suspense>
         </div>
       </header>
 
