@@ -1,0 +1,3 @@
+[submodule "vendor/dss-ui"]
+	path = vendor/dss-ui
+	url = https://github.com/kiri190-me/dss-ui.git
