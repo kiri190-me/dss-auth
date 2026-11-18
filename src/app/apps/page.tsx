@@ -190,10 +190,18 @@ async function HeaderBell({ feed }: { feed: Promise<PortalNotificationFeed | nul
 /**
  * 머리말 오른쪽에 서는 단추들(「사용자 관리」·「로그아웃」)의 모양.
  *
- * 🔴 높이 `h-9`(36px)는 **종에 맞춘 값**이다 — @dss/ui 의 `.dss-bell__summary`
- * 가 36px 정사각이라 그 옆에 20px 남짓한 밑줄 링크를 두면 종만 혼자 커서 줄이
- * 어긋나 보인다(2026-11-18 사용자 지적). 🔵 종이 좁은 화면에서 40px 로 커지는
- * 것은 그대로 둔다 — 그때는 글자 단추도 손가락에 맞게 커지는 편이 낫다.
+ * 🔴 **종과 키를 맞추지 않는다**(2026-11-18 두 번째 지적 — 「사이즈 배율을 50%로
+ * 해도 될 것 같은데?」). 처음에는 종(`.dss-bell__summary`, 36px 정사각)에 맞춰
+ * `h-9` 로 세웠는데, 폰에서 보니 **덩치가 너무 컸다.**
+ *
+ * 🔵 작게 해도 **어긋나 보이지 않는 까닭**: 이 단추들이 선 줄은 `items-center`
+ * 라 키가 달라도 **세로 중심이 맞는다.** 처음에 종만 혼자 커 보였던 것은 그때가
+ * 밑줄 **링크**였기 때문이다 — 테두리가 없으면 글자 아랫선만 보여 중심이 맞은
+ * 것이 눈에 안 띈다. 테두리를 두르고 나면 중심 정렬이 그대로 보인다.
+ *
+ * 🔴 그래서 **높이를 줄여도 되는 대신, 종 쪽을 건드려 맞추려 하지 마라.** 종은
+ * `vendor/dss-ui` 의 공용 조각이고 일곱 집이 같은 것을 쓴다 — 여기서만 덮어쓰면
+ * 포털의 종만 다른 크기가 된다.
  *
  * 🔴 **두 곳이 같은 값을 쓰므로 상수 하나로 둔다.** 한쪽만 고치면 키가 다시
  * 어긋나는데, 그 어긋남은 오류 없이 화면에서만 드러난다.
@@ -203,7 +211,12 @@ async function HeaderBell({ feed }: { feed: Promise<PortalNotificationFeed | nul
  * 받지 않으면 지금까지의 밑줄 모양 그대로 그린다.
  */
 const HEADER_ACTION_CLASS =
-  "inline-flex h-9 items-center rounded-md border border-zinc-300 px-3 text-sm " +
+  // 🔴 `whitespace-nowrap` 이 **없으면 폰에서 글자가 두 줄로 접힌다** — 「사용자
+  //    관리」가 「사용자 / 관리」가 되고, 그러면 단추가 세로로 부풀어 `h-9` 를 뚫고
+  //    나와 종과의 키 맞춤이 통째로 깨진다(2026-11-18 사용자 스크린샷).
+  //    `shrink-0` 은 같은 일을 가로에서 막는다 — flex 줄이 좁아질 때 단추부터
+  //    찌그러뜨리지 않게 한다.
+  "inline-flex h-7 shrink-0 items-center whitespace-nowrap rounded-md border border-zinc-300 px-2 text-xs " +
   "text-zinc-700 transition-colors hover:bg-zinc-50 hover:text-zinc-900 " +
   "dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100";
 
@@ -249,15 +262,39 @@ export default async function AppsPage() {
 
   return (
     <main className="mx-auto w-full max-w-2xl px-6 py-12">
-      <header className="flex items-start justify-between gap-4">
-        <div>
+      {/*
+        🔴 **폰에서도 한 줄이다**(2026-11-18 사용자 스크린샷 두 장 비교). 중간에 좁은
+        화면만 세로로 쌓아 본 적이 있는데, 그때는 단추가 36px·14pt 라 한 줄에 안
+        들어갔기 때문이다. 단추를 줄이고 나니 들어가서 되돌렸다 — 쌓으면 목록이
+        그만큼 아래로 밀리고, 머리말 한 줄에 다 보이는 편이 낫다.
+      */}
+      <header className="flex items-start justify-between gap-3">
+        {/*
+          🔴 `min-w-0` — 이름이 긴 사람에게 이 칸이 줄어들 수 있어야 한다. flex
+          아이템의 기본값(`min-width: auto`)이면 속의 글자만큼 자리를 우겨서,
+          오른쪽 단추 줄을 밀어내고 단추 글자가 접힌다.
+        */}
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold">DSS 시스템</h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+          {/*
+            🔴 `truncate` 와 `text-xs` 는 **짝이다**(2026-11-18). 이 줄은 폰에서
+            「최희만님 · 포털 관 / 리자」로 두 줄이 됐다 — 글자를 줄여 한 줄에
+            들어가게 하되, 이름이 더 긴 사람에게 다시 접히지 않도록 `truncate`
+            (안 접고, 넘치면 「…」)를 함께 건다. 🔵 이것이 듣는 것은 위 칸에
+            `min-w-0` 이 있기 때문이다 — 그것을 빼면 글이 줄어들 자리가 없어
+            잘리지도 않고 단추 줄을 밀어낸다.
+          */}
+          <p className="mt-1 truncate text-xs text-zinc-600 dark:text-zinc-400">
             {session.displayName}님
             {session.isPortalAdmin ? " · 포털 관리자" : ""}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        {/*
+          🔴 `shrink-0` — 좁아질 때 **왼쪽 제목 칸이 줄고 이 줄은 안 줄어든다.**
+          반대가 되면 단추가 찌그러지고 종의 펼친 목록 자리까지 틀어진다(그 목록은
+          종에 오른쪽을 맞춰 왼쪽으로 펼쳐진다 — 아래 주석).
+        */}
+        <div className="flex shrink-0 items-center gap-2">
           {session.isPortalAdmin ? (
             <Link href="/admin/users" className={HEADER_ACTION_CLASS}>
               사용자 관리
