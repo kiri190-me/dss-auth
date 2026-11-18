@@ -130,7 +130,11 @@ test("🔴 종과 점이 **약속 하나**를 나눠 본다 — 왕복이 둘로
 });
 
 test("🔴 종은 줄의 **맨 오른쪽 끝**이다 — 아니면 폰에서 펼친 목록이 잘린다", () => {
-  const logoutAt = appsPage.indexOf("<SignOutButton />");
+  // 🔴 **여는 꺾쇠까지만 찾는다.** 이 시험이 재는 것은 둘의 **차례** 하나인데,
+  //    `<SignOutButton />` 을 통째로 찾으면 그 조각에 속성이 하나 붙는 날
+  //    (2026-11-18 에 단추 모양을 넘기면서 실제로 붙었다) 차례는 멀쩡한데
+  //    「머리말에서 찾지 못했다」로 깨진다 — 고장 난 곳을 엉뚱하게 가리킨다.
+  const logoutAt = appsPage.indexOf("<SignOutButton");
   const bellAt = appsPage.indexOf("<HeaderBell");
   assert.ok(logoutAt > 0 && bellAt > 0, "머리말에서 찾지 못했다");
   assert.ok(bellAt > logoutAt, "🔴 종이 로그아웃보다 앞에 있다 — 목록이 화면 밖으로 잘린다");

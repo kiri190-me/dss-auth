@@ -187,6 +187,26 @@ async function HeaderBell({ feed }: { feed: Promise<PortalNotificationFeed | nul
   );
 }
 
+/**
+ * 머리말 오른쪽에 서는 단추들(「사용자 관리」·「로그아웃」)의 모양.
+ *
+ * 🔴 높이 `h-9`(36px)는 **종에 맞춘 값**이다 — @dss/ui 의 `.dss-bell__summary`
+ * 가 36px 정사각이라 그 옆에 20px 남짓한 밑줄 링크를 두면 종만 혼자 커서 줄이
+ * 어긋나 보인다(2026-11-18 사용자 지적). 🔵 종이 좁은 화면에서 40px 로 커지는
+ * 것은 그대로 둔다 — 그때는 글자 단추도 손가락에 맞게 커지는 편이 낫다.
+ *
+ * 🔴 **두 곳이 같은 값을 쓰므로 상수 하나로 둔다.** 한쪽만 고치면 키가 다시
+ * 어긋나는데, 그 어긋남은 오류 없이 화면에서만 드러난다.
+ *
+ * 🔵 `/pending` 의 로그아웃은 **안 바뀐다** — 거기엔 종이 없어 맞출 상대가
+ * 없고, 이번 지시의 범위도 이 화면 하나다. `SignOutButton` 이 className 을
+ * 받지 않으면 지금까지의 밑줄 모양 그대로 그린다.
+ */
+const HEADER_ACTION_CLASS =
+  "inline-flex h-9 items-center rounded-md border border-zinc-300 px-3 text-sm " +
+  "text-zinc-700 transition-colors hover:bg-zinc-50 hover:text-zinc-900 " +
+  "dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100";
+
 export default async function AppsPage() {
   const session = await readSsoSession();
   if (!session) redirect("/signin");
@@ -237,16 +257,13 @@ export default async function AppsPage() {
             {session.isPortalAdmin ? " · 포털 관리자" : ""}
           </p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
           {session.isPortalAdmin ? (
-            <Link
-              href="/admin/users"
-              className="text-sm text-zinc-500 underline underline-offset-4 hover:text-zinc-900 dark:hover:text-zinc-100"
-            >
+            <Link href="/admin/users" className={HEADER_ACTION_CLASS}>
               사용자 관리
             </Link>
           ) : null}
-          <SignOutButton />
+          <SignOutButton className={HEADER_ACTION_CLASS} />
           {/*
             🔴 **줄의 맨 오른쪽 끝**이다. 펼친 목록은 종에 오른쪽 끝을 맞춰
             왼쪽으로 펼쳐지므로(@dss/ui 의 `.dss-bell__list { right: 0 }`),
