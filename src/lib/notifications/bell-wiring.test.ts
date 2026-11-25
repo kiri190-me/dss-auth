@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { NotificationBell, type NotificationBellItem } from "@dss/ui";
+import { NotificationBell, notificationToneIndex, type NotificationBellItem } from "@dss/ui";
+import { parseSourceFeed } from "./merge";
+import type { NotificationSource } from "./sources";
 
 /**
  * ============================================================================
@@ -279,6 +281,71 @@ test("🔴 알림이 없으면 종 자체가 없다 — 이 집이 고른 모습
   assert.equal(NotificationBell({ items: [], count: 0 }), null);
   assert.equal(appsPage.includes("showWhenEmpty"), false, "빈 종을 세우기로 바뀌었다");
   assert.equal(appsPage.includes("emptyLabel"), false, "빈 칸 글자가 생겼다");
+});
+
+/* ── 🔴 4-2. 색 칸 번호가 피드에서 종까지 이어지는가 (2026-11-25) ────────── */
+
+/** 색 칸 번호를 싣는 시스템 하나. 🔴 값은 전부 가짜다. */
+const TONE_SOURCE: NotificationSource = {
+  clientId: "rf-service-system",
+  name: "A/S 관리",
+  notificationsUrl: "http://127.0.0.1:3000/api/integration/notifications",
+  settingsUrl: "http://127.0.0.1:3000/api/integration/notification-settings",
+};
+
+/** 그 시스템이 내주는 한 줄. `tone` 을 넘기지 않으면 **싣지 않은** 모양이다. */
+function feedRow(kind: string, tone?: number): Record<string, unknown> {
+  return {
+    id: `${kind}:FAKE-1`,
+    kind,
+    kindLabel: "가짜 이름표",
+    subject: "FAKE-1",
+    detail: "가짜 줄입니다",
+    href: "http://127.0.0.1:3000/x/1",
+    ...(tone === undefined ? {} : { tone }),
+  };
+}
+
+/** 그려진 트리에서 종류 딱지의 `data-tone` 을 차례대로 모은다. */
+function collectTones(node: unknown): number[] {
+  if (Array.isArray(node)) return node.flatMap((child) => collectTones(child));
+  if (typeof node !== "object" || node === null || !("props" in node)) return [];
+  const element = node as { props: Record<string, unknown> };
+  const own = typeof element.props["data-tone"] === "number" ? [element.props["data-tone"] as number] : [];
+  return [...own, ...collectTones(element.props.children)];
+}
+
+test("🔴 시스템이 실은 색 칸 번호가 **종에 그대로** 그려진다 — 피드에서 그림까지", () => {
+  // 🔵 **무엇을 재는지 먼저 세운다.** 표본으로 고른 두 종류는 해시가 **둘 다
+  //    7** 이다 — 번호를 안 실으면 종에서 서로 **같은 색**으로 나온다(바로 아래
+  //    짝 시험이 그 모습을 그대로 재 둔다). 그러니 이 줄이 참이라야 아래 단언이
+  //    「갈라졌다」를 재는 말이 된다.
+  assert.equal(
+    notificationToneIndex("QUOTE_APPROVAL_PENDING"),
+    notificationToneIndex("REPAIR_CASE_DUE_DATE_INVERTED")
+  );
+
+  // 🔵 13·14 는 A/S 가 그 두 종류에 매긴 칸이지만, 여기서 재는 것은 그 숫자가
+  //    맞는가가 아니라 **실은 번호가 그대로 그려지는가**다(어느 종류가 무슨 색인지를
+  //    정하는 곳은 그 시스템이고, 맞는지는 그쪽 시험이 본다).
+  const feed = parseSourceFeed(
+    { items: [feedRow("QUOTE_APPROVAL_PENDING", 13), feedRow("REPAIR_CASE_DUE_DATE_INVERTED", 14)] },
+    TONE_SOURCE
+  );
+  const drawn = NotificationBell({ items: feed.items, count: feed.count });
+  assert.deepEqual(collectTones(drawn), [13, 14]);
+});
+
+test("🔴 안 실으면 예전 그대로 해시다 — 그래서 그 둘이 같은 색이었다", () => {
+  // 🔵 위 시험의 짝이다. 이 줄이 없으면 위 시험은 「색이 원래 갈라져 있었다」
+  //    로도 통과한다 — 2026-11-25 에 사용자가 본 어긋남이 바로 이 모습이다.
+  const feed = parseSourceFeed(
+    { items: [feedRow("QUOTE_APPROVAL_PENDING"), feedRow("REPAIR_CASE_DUE_DATE_INVERTED")] },
+    TONE_SOURCE
+  );
+  assert.equal("tone" in feed.items[0], false, "포털이 없는 번호를 지어내고 있다");
+  const drawn = NotificationBell({ items: feed.items, count: feed.count });
+  assert.deepEqual(collectTones(drawn), [7, 7]);
 });
 
 test("🔴 다크는 OS 설정을 따른다 — 이 포털에 `.dark` 표시가 없다", () => {

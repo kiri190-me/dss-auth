@@ -48,6 +48,27 @@ export type PortalNotificationItem = {
   detail: string;
   /** 🔴 절대 주소. 손대지 않는다. */
   href: string;
+  /**
+   * 🔴 **색 칸 번호 — 보낸 시스템이 골랐을 때만 있다**(2026-11-25).
+   *
+   * 종은 이 번호가 없으면 종류 코드를 해시해 색을 집는다(@dss/ui 의
+   * resolveNotificationTone). 그 셈은 「종류마다 다른 색」만 지키고 **뜻은 지키지
+   * 못해서**, 같은 알림이 A/S 의 종에서는 빨강인데 포털의 종에서는 다른 색으로
+   * 나왔다(실측 2026-11-25 — A/S 의 열 종류 가운데 아홉이 그랬고, 그중 둘은 해시가
+   * 겹쳐 **서로 다른 종류가 같은 색**이기도 했다). 사용자 요구는 「A/S 에 뜨는 색을
+   * 기준으로 맞춰 줘」였고, 뜻을 아는 쪽은 종류 목록을 가진 **그 시스템**뿐이다.
+   *
+   * 🔴 **없으면 이 칸을 아예 싣지 않는다**(`undefined` 가 아니라 **없음**). 포털은
+   * 다섯 시스템의 피드를 모으는데 번호를 보내는 곳은 지금 A/S 하나뿐이다. 없을 때
+   * 0 같은 값으로 메우면 **그 시스템의 알림이 전부 한 색으로 쏠리고**, 그것은
+   * 해시가 주던 「종류마다 다른 색」보다도 나쁘다. 칸이 없으면 종이 예전 그대로
+   * 해시로 떨어진다 — 안 보내는 시스템의 색은 이 변경으로 한 칸도 안 바뀐다.
+   *
+   * 🔵 다른 칸들과 달리 빈 문자열로 메우는 길이 없다. `kind`·`kindLabel`·`detail`
+   *    은 「없음」을 그릴 수 있는 글자지만(종이 빈 글자면 안 그린다), 색 칸에는
+   *    「없음」을 뜻하는 번호가 없기 때문이다.
+   */
+  tone?: number;
 };
 
 /** 한 시스템에 물어본 결과. 종이 「어디가 빠졌는지」를 말할 수 있게 남긴다. */
@@ -195,6 +216,52 @@ function text(value: unknown): string | null {
 }
 
 /**
+ * 색 칸의 수. 🔴 `@dss/ui` 의 `NOTIFICATION_TONE_COUNT` 와 **같은 값이어야 한다.**
+ *
+ * ── 🔴 왜 import 하지 않고 베껴 적나 ────────────────────────────────────────
+ * 이 파일은 React 도 네트워크도 모르는 순수 계산이고, 라우트 핸들러와 node
+ * 스크립트(check:notify → gather.ts → 여기)가 함께 쓴다. `@dss/ui` 의 뿌리는
+ * 종과 메뉴바 두 React 조각을 싣고 있고 그 안쪽에는 `"use client"` 도 있다 —
+ * **정수 하나**를 얻자고 그 전부를 이 자리의 의존 그래프에 끌어올 값어치가 없다.
+ *
+ * 🔴 그리고 그 뿌리는 `--conditions=react-server` 에서 **ESM 으로 읽히면 아예 안
+ * 올라온다**(실측 2026-11-25):
+ *
+ *   node --conditions=react-server --import tsx -e "import('@dss/ui')"
+ *   → The requested module 'react' does not provide an export named 'useEffect'
+ *
+ * 🔵 같은 조건으로 도는 scripts 가 지금 멀쩡한 것은 **우연에 가깝다** — 이
+ *    저장소의 `.ts` 를 tsx 가 CJS 로 바꿔 주고, CJS 에서는 없는 이름이 오류가
+ *    아니라 `undefined` 이기 때문이다(같은 날 그 자리에서 재 보았다:
+ *    `typeof useEffect = undefined | module kind: CJS`). package.json 에
+ *    `"type": "module"` 이 붙는 날 그 우연은 사라진다.
+ *
+ * 🔴 그래서 숫자만 베껴 두고, **두 값이 같은지는 시험이 맞댄다**(merge.test.ts —
+ * 그쪽은 시험이라 묶음을 그대로 불러도 된다). 베낀 값이 어긋나면 거르는 범위가
+ * 조용히 틀어지므로 그 못이 없으면 안 된다.
+ */
+export const TONE_COUNT = 16;
+
+/**
+ * 받은 **색 칸 번호**. 🔴 쓸 수 없는 값이면 `undefined` 다 — 0 으로 메우지 않는다.
+ *
+ * 메우면 그 시스템의 알림이 전부 0번 색으로 쏠린다(위 `tone` 주석). 여기서
+ * `undefined` 를 내면 부르는 쪽이 칸 자체를 안 싣고, 종은 예전처럼 해시로
+ * 떨어진다 — 「뜻은 아니지만 종류마다 다른 색」이 「전부 같은 색」보다 낫다.
+ *
+ * 🔴 **범위를 여기서 본다.** 묶음도 제 손으로 한 번 더 보지만(그쪽
+ * resolveNotificationTone), 이 값은 포털이 **사이트들에게 그대로 내주는** 값이기도
+ * 하다(site-service.ts). 쓰레기를 날라 두면 그것을 믿는 쪽이 언젠가 생긴다.
+ * 🔵 `Number.isInteger` 는 숫자가 아닌 값(문자열 "3" 등)·소수·NaN·무한대에 모두
+ *    false 다 — 남의 시스템이 보낸 값이라 그 전부를 여기서 걸러 낸다.
+ */
+function toneIndex(value: unknown): number | undefined {
+  if (!Number.isInteger(value)) return undefined;
+  const tone = value as number;
+  return tone >= 0 && tone < TONE_COUNT ? tone : undefined;
+}
+
+/**
  * 링크가 **다른 사이트로 데려갈 수 있는 주소**인가.
  *
  * 🔴 여기서 주소를 고치지 않는다 — 걸러 낼 뿐이다. 앞에 우리 주소를 붙이는
@@ -255,6 +322,10 @@ export function parseSourceFeed(raw: unknown, source: NotificationSource): Sourc
     if (id === null || href === null || subject === null) continue;
     if (!isNavigableHref(href)) continue;
 
+    // 🔴 쓸 수 없는 번호는 `undefined` 다(toneIndex). 아래에서 **칸 자체가
+    //    빠지고**, 그 줄은 종이 해시로 색을 집는다 — 예전 그대로다.
+    const tone = toneIndex(row.tone);
+
     items.push({
       key: `${source.clientId}:${id}`,
       sourceId: source.clientId,
@@ -266,6 +337,11 @@ export function parseSourceFeed(raw: unknown, source: NotificationSource): Sourc
       subject,
       detail: text(row.detail) ?? "",
       href,
+      // 🔴 **없으면 칸을 안 싣는다.** `tone: undefined` 로 적으면 열쇠가 생겨
+      //    버린다 — JSON 으로 나갈 때는 사라지지만, 받은 줄을 그대로 비교하는
+      //    자리(시험·캐시)에서 「없음」과 「undefined 가 든 칸」이 갈린다.
+      //    그리고 무엇보다 **0 으로 메우지 않는다**(위 타입의 그 문단).
+      ...(tone === undefined ? {} : { tone }),
     });
   }
 

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { NOTIFICATION_TONE_COUNT } from "@dss/ui";
 import {
   MAX_ITEMS_PER_SOURCE,
+  TONE_COUNT,
   hasUnreadFor,
   mergeSourceOutcomes,
   parseSourceFeed,
@@ -25,7 +27,14 @@ const METERS: NotificationSource = {
   settingsUrl: "http://192.168.0.12:3200/api/integration/notification-settings",
 };
 
-/** A/S 가 실제로 내주는 한 줄(그쪽 ExternalNotificationItem). */
+/**
+ * 한 시스템이 내주는 한 줄(A/S 의 ExternalNotificationItem 모양).
+ *
+ * 🔴 **`tone`(색 칸 번호)이 없는 모양이다.** 번호를 싣는 시스템은 지금 A/S
+ * 하나뿐이고 나머지 넷은 이 모양 그대로 보낸다 — 아래 deepEqual 들이 「안 보내면
+ * 칸이 생기지도 않는다」를 함께 지킨다. 번호가 있는 줄은 그 자리에서 `tone` 을
+ * 넘겨 짓는다(「색 칸 번호」 묶음).
+ */
 function item(over: Record<string, unknown> = {}) {
   return {
     id: "REPAIR_CASE_APPROVAL:RC-2026-0001",
@@ -147,6 +156,67 @@ test("종류 이름이 없어도 알림 자체는 살린다", () => {
   );
   assert.equal(feed.items.length, 1);
   assert.equal(feed.items[0].kindLabel, "");
+});
+
+/* ── 🔴 색 칸 번호(tone) — 2026-11-25 ──────────────────────────────────────
+ *
+ * 그 전까지 종은 **종류 코드를 해시해** 색을 집었고(@dss/ui 의 tone.ts), 그 셈은
+ * 뜻을 모른다. 그래서 같은 알림이 A/S 의 종과 포털의 종에서 다른 색으로 나왔다
+ * (실측: A/S 열 종류 가운데 아홉). 사용자 요구는 「A/S 에 뜨는 색을 기준으로
+ * 맞춰 줘」였고, 뜻을 아는 쪽은 종류 목록을 가진 그 시스템뿐이라 **번호를 받아
+ * 쓴다.**
+ *
+ * 🔴 이 묶음이 지키는 못은 「받으면 쓴다」가 아니라 **「없으면 안 싣는다」** 쪽이다.
+ * 포털은 다섯 시스템의 피드를 모으는데 번호를 보내는 곳은 아직 하나뿐이다 —
+ * 없을 때 0 으로 메우면 **그 시스템 알림이 전부 같은 색으로 쏠린다.**
+ */
+
+test("🔴 보낸 시스템이 고른 색 칸 번호를 그대로 옮긴다", () => {
+  const feed = parseSourceFeed({ items: [item({ tone: 13 })], count: 1 }, AS);
+  assert.equal(feed.items[0].tone, 13);
+});
+
+test("🔴 **안 보내면 칸 자체가 없다** — 0 으로 메우면 그 시스템 알림이 전부 한 색이 된다", () => {
+  // 🔵 `tone: undefined` 도 안 된다. JSON 으로 나갈 때는 사라지지만 받은 줄을
+  //    그대로 맞대는 자리(이 deepEqual · 캐시)에서 「없음」과 갈린다.
+  const feed = parseSourceFeed({ items: [item()], count: 1 }, AS);
+  assert.equal("tone" in feed.items[0], false, JSON.stringify(feed.items[0]));
+  assert.equal(feed.items[0].tone, undefined);
+});
+
+test("🔴 쓸 수 없는 번호도 **없는 것으로** 둔다 — 그 줄만 해시로 돌아간다", () => {
+  // 범위 밖 · 소수 · 숫자가 아닌 값 전부. 그대로 내보내면 묶음 CSS 에 그 번호의
+  // 규칙이 없어 **그 줄만 색이 통째로 사라지고** 아무 오류도 나지 않는다.
+  const 나쁜값 = [-1, TONE_COUNT, 99, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "13", null, true, {}];
+  for (const tone of 나쁜값) {
+    const feed = parseSourceFeed({ items: [item({ tone })], count: 1 }, AS);
+    assert.equal(feed.items.length, 1, `${JSON.stringify(tone)}: 줄까지 버렸다 — 색은 알림보다 덜 중요하다`);
+    assert.equal("tone" in feed.items[0], false, `${JSON.stringify(tone)} 가 그대로 실렸다`);
+  }
+  // 🔵 경계 — 바로 아래 번호는 **살아야** 한다(위 줄들이 「언제나 버린다」로
+  //    통과하는 것을 막는다).
+  const ok = parseSourceFeed({ items: [item({ tone: TONE_COUNT - 1 })], count: 1 }, AS);
+  assert.equal(ok.items[0].tone, TONE_COUNT - 1);
+  const zero = parseSourceFeed({ items: [item({ tone: 0 })], count: 1 }, AS);
+  assert.equal(zero.items[0].tone, 0, "0 은 멀쩡한 칸이다 — 「없음」과 갈라야 한다");
+});
+
+test("🔴 번호를 보내는 시스템과 안 보내는 시스템이 한 목록에 섞인다", () => {
+  // 지금 실제 모습이다 — A/S 만 싣고 나머지 넷은 안 싣는다. 한쪽을 다른 쪽에
+  // 맞춰 지우거나 메우면 안 된다.
+  const feed = parseSourceFeed(
+    { items: [item({ id: "a", tone: 15 }), item({ id: "b" })], count: 2 },
+    AS
+  );
+  assert.equal(feed.items[0].tone, 15);
+  assert.equal("tone" in feed.items[1], false);
+});
+
+test("🔴 베껴 적은 색 칸 수가 묶음과 같다 — 어긋나면 거르는 범위가 조용히 틀어진다", () => {
+  // merge.ts 는 정수 하나 때문에 묶음을 끌어오지 않는다(그 상수 곁의 까닭과
+  // 실측). 그래서 숫자를 베껴 두었고, 두 값이 같은지는 **묶음을 그대로 부를 수
+  // 있는 이 시험**이 맞댄다.
+  assert.equal(TONE_COUNT, NOTIFICATION_TONE_COUNT);
 });
 
 test("🔴 targetKey 는 옮기지 않는다 — 이제 포털이 셀 때 쓰지 않는 값이다", () => {
